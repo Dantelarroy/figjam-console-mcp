@@ -283,11 +283,62 @@ Default phase order:
 
 ## Roadmap
 
-Current roadmap focus:
-- DBI v1 deterministic board indexing
-- alias-based deterministic resolution
-- screenshot validation as complementary visual QA
-- reliability and observability hardening
+Source of truth: Notion Kanban `FigJam Console MCP — Product Roadmap`  
+https://www.notion.so/31b2c91486408127a4f6cb425e1a3f2c
+
+### Completed
+
+- `Epic: Infrastructure Stabilization and Guard Layer` (P0/P1)
+  - Bridge connection model stabilized (`GET_FILE_INFO`, active file resolution)
+  - Capability guard implemented (`editorType`) with standardized `CAPABILITY_NOT_SUPPORTED`
+  - Guard coverage tests and policy audit added
+- `Epic: Workflow Tools v1` (P1)
+  - `bulkCreateStickies`, `findNodes`, `createCluster`, `summarizeBoard`, `autoLayoutBoard`
+- `Epic: Research Workspace Tools v1` (P1)
+  - `ingestResearchNotes`, `createReferenceWall`, `organizeByTheme`, `linkByRelation`, `generateResearchBoard`
+- `Epic: Documentation and Onboarding` (P1/P2)
+  - MCP setup docs, tool catalog, and repo-local agent playbooks
+
+### In Progress
+
+- `Epic: DBI v1 Implementation` (P0)
+  - `DBI v1 Phase 1 — Indexing and Metadata`
+  - Active subtasks include:
+    - pluginData metadata helpers
+    - `figjam_index_board` and `getBoardIndex`
+    - deterministic cache and ordering guarantees
+
+### Next
+
+- `DBI v1 Phase 2 — Upsert and Alias Resolution` (P0/P1)
+  - Implement `figjam_upsert_artifact` with deterministic target/create/patch precedence
+  - Add alias collision handling and stable alias resolution helpers
+  - Integrate DBI metadata writes into node creation paths
+- `Epic: Reliability and Observability` (P1)
+  - production smoke matrix + automation harness
+  - pass/fail reporting with raw MCP payload references
+
+### Backlog
+
+- `DBI v1 Phase 3 — Organization + Validation` (P1)
+  - move organization flows to DBI source-of-truth resolution
+  - alias-first relation/organization paths
+  - screenshot checks as complementary visual QA (not source-of-truth)
+- `Epic: Screenshot Validation Layer` (P2)
+  - optional visual verification artifacts after deterministic board mutations
+- `Epic: Repo Cleanup and Productization` (P2)
+  - release checklist, quality gates, and rebase-safe release process
+
+### Blocked
+
+- `Task: Confirm release branch/tag policy for production milestones` (P2)
+  - dependency: explicit decision on release cadence and ownership
+
+### DBI v1 Target Sequence
+
+1. Phase 1: deterministic board index + metadata schema + cache + contract tests.
+2. Phase 2: upsert + alias resolution + metadata writes on creation paths.
+3. Phase 3: DBI-driven organization tools + screenshot validation as secondary safety layer.
 
 ## License
 
