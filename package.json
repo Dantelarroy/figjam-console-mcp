@@ -51,7 +51,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/southleft/figma-console-mcp.git"
+		"url": "https://github.com/Dantelarroy/figjam-console-mcp.git"
 	},
 	"engines": {
 		"node": ">=18.0.0"

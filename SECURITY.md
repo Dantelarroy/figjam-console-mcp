@@ -109,7 +109,7 @@ All network communication is limited to:
 ### Deployment Options
 For maximum security, enterprises can:
 1. Use **Local Mode exclusively** (no external network calls)
-2. Self-host the Cloudflare Worker (see [Self-Hosting Guide](https://docs.figma-console-mcp.southleft.com/self-hosting))
+2. Self-host the Cloudflare Worker (see [Self-Hosting Guide](https://github.com/Dantelarroy/figjam-console-mcp))
 3. Audit the complete source code on GitHub
 4. Run behind corporate firewalls with only `api.figma.com` allowlisted
 
@@ -122,7 +122,7 @@ For maximum security, enterprises can:
 
 If you discover a security vulnerability, please report it responsibly:
 
-1. Open a [private security advisory](https://github.com/southleft/figma-console-mcp/security/advisories/new) on GitHub
+1. Open a [private security advisory](https://github.com/Dantelarroy/figjam-console-mcp/security/advisories/new) on GitHub
 2. **Do not** open a public GitHub issue for security vulnerabilities
 3. Include steps to reproduce and potential impact
 4. We aim to respond within 48 hours
@@ -141,4 +141,4 @@ If you discover a security vulnerability, please report it responsibly:
 
 ## Questions?
 
-For security-related inquiries, open a [GitHub Discussion](https://github.com/southleft/figma-console-mcp/discussions) or use the [private security advisory](https://github.com/southleft/figma-console-mcp/security/advisories/new) feature for sensitive matters.
+For security-related inquiries, open a [GitHub Discussion](https://github.com/Dantelarroy/figjam-console-mcp/discussions) or use the [private security advisory](https://github.com/Dantelarroy/figjam-console-mcp/security/advisories/new) feature for sensitive matters.
