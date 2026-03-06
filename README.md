@@ -42,6 +42,62 @@ This repository is focused on:
 - `linkByRelation`
 - `generateResearchBoard`
 
+## Tool Catalog (What Each Tool Does)
+
+### Connection and runtime
+
+| Tool | What it does |
+|---|---|
+| `figjam_get_status` | Returns bridge/server connection status, active file info, and health summary. |
+| `figjam_list_open_files` | Lists currently connected FigJam files through the bridge. |
+| `figjam_set_active_file` | Sets the active connected file for subsequent tool execution. |
+
+### Board primitives
+
+| Tool | What it does |
+|---|---|
+| `createSticky` | Creates a sticky note (`text`, optional position/size). |
+| `updateSticky` | Updates sticky content and/or geometry by `nodeId`. |
+| `deleteSticky` | Deletes a sticky by `nodeId`. |
+| `createShape` | Creates `rectangle`, `circle`, or `diamond` (optional text). |
+| `createConnector` | Creates a connector between `fromNodeId` and `toNodeId`. |
+| `createText` | Creates a text node with optional position/font size. |
+| `createSection` | Creates a section container in the board. |
+| `getBoardNodes` | Returns all board nodes for the active page. |
+| `getStickies` | Returns sticky-only subset of board nodes. |
+| `getConnections` | Returns connector-only subset of board nodes. |
+
+### Workflow tools (deterministic composition)
+
+| Tool | What it does |
+|---|---|
+| `bulkCreateStickies` | Batch-creates many stickies using deterministic placement (`as_provided`/`grid`). |
+| `findNodes` | Finds nodes by exact filters/query, bbox, sort, pagination. |
+| `createCluster` | Creates a titled cluster (section/title/stickies) and optional sequential connectors. |
+| `summarizeBoard` | Returns structural counts/connectivity summary (no AI inference). |
+| `autoLayoutBoard` | Repositions target nodes with deterministic modes (`grid`, `compact`, `swimlanes`). |
+
+### Research workspace tools (deterministic)
+
+| Tool | What it does |
+|---|---|
+| `ingestResearchNotes` | Ingests structured research notes into stickies with deterministic formatting/placement. |
+| `createReferenceWall` | Builds grouped references wall (by kind or single-grid) with stable layout rules. |
+| `organizeByTheme` | Creates theme clusters from explicit refs/queries (no semantic inference). |
+| `linkByRelation` | Creates connectors between explicit node refs/queries with dedupe options. |
+| `generateResearchBoard` | End-to-end deterministic scaffold: sections + notes + references + optional links/layout. |
+
+### Upstream compatibility surface (guarded)
+
+This repository keeps broad upstream MCP tool parity for compatibility.  
+In a FigJam runtime, tools that require Figma Design-only capabilities are registered but blocked by the capability guard and return a structured `CAPABILITY_NOT_SUPPORTED` error (instead of mutating data incorrectly).
+
+Representative blocked families in FigJam:
+- variables/tokens tools (`figma_get_variables`, variable CRUD, modes/collections)
+- components/instances tools
+- design-system extraction/audit tools
+- design-code parity/doc generation tools that depend on Design-only data
+
 ## Architecture
 
 Main layers:
