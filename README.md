@@ -107,6 +107,73 @@ npm run dev:figjam
 npm test
 ```
 
+## How To Use This MCP (Detailed)
+
+### 1. Start the server
+
+```bash
+npm run dev:figjam
+```
+
+Default bridge endpoint: `ws://localhost:9323`.
+
+### 2. Connect a live FigJam board
+
+1. Open a FigJam board in Figma Desktop.
+2. Run the development plugin from `figjam-desktop-bridge/manifest.json`.
+3. Keep the plugin window open.
+4. Confirm handshake in logs:
+   - plugin sends `GET_FILE_INFO`
+   - server shows file connected (`connectedFiles: 1`)
+
+### 3. Connect from your MCP client
+
+Use your MCP client (Codex/Claude) against this repository server process.
+
+For clients that use local commands, point to:
+
+```bash
+npm run dev:figjam
+```
+
+For clients that use WebSocket bridge status, use:
+
+```text
+ws://localhost:9323
+```
+
+### 4. Run a minimal smoke sequence
+
+Run these calls in order once the bridge is connected:
+
+1. `figjam_get_status`
+2. `createSticky`
+3. `createShape`
+4. `createConnector`
+5. `getBoardNodes`
+
+Expected behavior:
+- status reports active connection,
+- created nodes appear in the board,
+- read tools return the created nodes.
+
+### 5. Use higher-level deterministic workflows
+
+After primitive validation, use workflow layers:
+
+- Workflow tools:
+  - `bulkCreateStickies`
+  - `findNodes`
+  - `createCluster`
+  - `summarizeBoard`
+  - `autoLayoutBoard`
+- Research workspace tools:
+  - `ingestResearchNotes`
+  - `createReferenceWall`
+  - `organizeByTheme`
+  - `linkByRelation`
+  - `generateResearchBoard`
+
 ## Development Workflow
 
 This repository follows a spec-driven process:
