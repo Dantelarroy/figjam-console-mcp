@@ -1,0 +1,43 @@
+{
+  "name": "FigJam Desktop Bridge",
+  "id": "figjam-desktop-bridge-mcp",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figjam", "dev"],
+  "capabilities": ["inspect"],
+  "enablePrivatePluginApi": true,
+  "permissions": ["teamlibrary"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": [
+      "http://localhost",
+      "ws://localhost",
+      "ws://localhost:9323",
+      "ws://localhost:9324",
+      "ws://localhost:9325",
+      "ws://localhost:9326",
+      "ws://localhost:9327",
+      "ws://localhost:9328",
+      "ws://localhost:9329",
+      "ws://localhost:9330",
+      "ws://localhost:9331",
+      "ws://localhost:9332"
+    ],
+    "reasoning": "Connects to local FigJam MCP server via WebSocket. Supports port range 9323-9332 for multi-instance operation (e.g., multiple Claude Desktop tabs or CLI tools).",
+    "devAllowedDomains": [
+      "http://localhost",
+      "ws://localhost",
+      "ws://localhost:9323",
+      "ws://localhost:9324",
+      "ws://localhost:9325",
+      "ws://localhost:9326",
+      "ws://localhost:9327",
+      "ws://localhost:9328",
+      "ws://localhost:9329",
+      "ws://localhost:9330",
+      "ws://localhost:9331",
+      "ws://localhost:9332"
+    ]
+  }
+}
