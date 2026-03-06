@@ -252,7 +252,7 @@ export class FigmaConsoleMCPv3 extends McpAgent {
 				logger.info({ sessionId }, "No OAuth token found - user needs to authenticate");
 
 				// No authentication available - direct user to OAuth flow
-				const authUrl = `https://figma-console-mcp.southleft.com/oauth/authorize?session_id=${sessionId}`;
+				const authUrl = `https://github.com/Dantelarroy/figjam-console-mcp/oauth/authorize?session_id=${sessionId}`;
 
 				// Only use PAT fallback if explicitly configured AND no OAuth token exists
 				if (env?.FIGMA_ACCESS_TOKEN) {
@@ -275,7 +275,7 @@ export class FigmaConsoleMCPv3 extends McpAgent {
 			// For other OAuth errors (expired token, refresh failed, etc.), do NOT fall back to PAT
 			logger.error({ error, sessionId }, "OAuth token retrieval failed - re-authentication required");
 
-			const authUrl = `https://figma-console-mcp.southleft.com/oauth/authorize?session_id=${sessionId}`;
+			const authUrl = `https://github.com/Dantelarroy/figjam-console-mcp/oauth/authorize?session_id=${sessionId}`;
 
 			throw new Error(
 				JSON.stringify({
@@ -940,7 +940,7 @@ export default {
 		// Redirect /docs to subdomain
 		if (url.pathname === "/docs" || url.pathname.startsWith("/docs/")) {
 			const newPath = url.pathname.replace(/^\/docs\/?/, "/");
-			const redirectUrl = `https://docs.figma-console-mcp.southleft.com${newPath}${url.search}`;
+			const redirectUrl = `https://github.com/Dantelarroy/figjam-console-mcp${newPath}${url.search}`;
 			return Response.redirect(redirectUrl, 301);
 		}
 
@@ -1190,7 +1190,7 @@ export default {
 				grant_types_supported: ["authorization_code", "refresh_token"],
 				token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
 				code_challenge_methods_supported: ["S256"],
-				service_documentation: "https://docs.figma-console-mcp.southleft.com",
+				service_documentation: "https://github.com/Dantelarroy/figjam-console-mcp",
 			};
 			return new Response(JSON.stringify(metadata, null, 2), {
 				headers: {
@@ -1471,7 +1471,7 @@ export default {
 					JSON.stringify({
 						error: "OAuth not configured",
 						message: "Server administrator needs to configure FIGMA_OAUTH_CLIENT_ID",
-						docs: "https://github.com/southleft/figma-console-mcp#oauth-setup"
+						docs: "https://github.com/Dantelarroy/figjam-console-mcp#oauth-setup"
 					}),
 					{
 						status: 500,
@@ -1824,8 +1824,8 @@ export default {
 	// Proxy /docs to Mintlify
 	if (/^\/docs/.test(url.pathname)) {
 		// Try mintlify.app domain (Mintlify's standard hosting)
-		const DOCS_URL = "southleftllc.mintlify.app";
-		const CUSTOM_URL = "figma-console-mcp.southleft.com";
+		const DOCS_URL = "github.com/Dantelarroy/figjam-console-mcp";
+		const CUSTOM_URL = "github.com/Dantelarroy/figjam-console-mcp";
 
 		const proxyUrl = new URL(request.url);
 		proxyUrl.hostname = DOCS_URL;
@@ -1847,15 +1847,15 @@ export default {
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Figma Console MCP - The Most Comprehensive MCP Server for Figma</title>
-	<link rel="icon" type="image/svg+xml" href="https://docs.figma-console-mcp.southleft.com/favicon.svg">
+	<link rel="icon" type="image/svg+xml" href="https://github.com/Dantelarroy/figjam-console-mcp/favicon.svg">
 	<meta name="description" content="Turn your Figma design system into a living API. 57+ tools give AI assistants deep access to design tokens, component specs, variables, and programmatic design creation.">
 
 	<!-- Open Graph -->
 	<meta property="og:type" content="website">
-	<meta property="og:url" content="https://figma-console-mcp.southleft.com">
+	<meta property="og:url" content="https://github.com/Dantelarroy/figjam-console-mcp">
 	<meta property="og:title" content="Figma Console MCP - Turn Your Design System Into a Living API">
 	<meta property="og:description" content="The most comprehensive MCP server for Figma. 57+ tools give AI assistants deep access to design tokens, components, variables, and programmatic design creation.">
-	<meta property="og:image" content="https://docs.figma-console-mcp.southleft.com/images/og-image.jpg">
+	<meta property="og:image" content="https://github.com/Dantelarroy/figjam-console-mcp/images/og-image.jpg">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
 
@@ -1863,7 +1863,7 @@ export default {
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Figma Console MCP - Turn Your Design System Into a Living API">
 	<meta name="twitter:description" content="The most comprehensive MCP server for Figma. 57+ tools give AI assistants deep access to design tokens, components, variables, and programmatic design creation.">
-	<meta name="twitter:image" content="https://docs.figma-console-mcp.southleft.com/images/og-image.jpg">
+	<meta name="twitter:image" content="https://github.com/Dantelarroy/figjam-console-mcp/images/og-image.jpg">
 
 	<meta name="theme-color" content="#0D9488">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2682,16 +2682,16 @@ export default {
 <body>
 	<header class="header">
 		<a href="/" class="logo">
-			<img src="https://docs.figma-console-mcp.southleft.com/logo/light.svg" alt="Figma Console MCP" class="logo-dark">
-			<img src="https://docs.figma-console-mcp.southleft.com/logo/dark.svg" alt="Figma Console MCP" class="logo-light" style="display: none;">
+			<img src="https://github.com/Dantelarroy/figjam-console-mcp/logo/light.svg" alt="Figma Console MCP" class="logo-dark">
+			<img src="https://github.com/Dantelarroy/figjam-console-mcp/logo/dark.svg" alt="Figma Console MCP" class="logo-light" style="display: none;">
 		</a>
 		<div class="header-right">
 			<nav class="nav">
-				<a href="https://docs.figma-console-mcp.southleft.com">Documentation</a>
-				<a href="https://github.com/southleft/figma-console-mcp">GitHub</a>
+				<a href="https://github.com/Dantelarroy/figjam-console-mcp">Documentation</a>
+				<a href="https://github.com/Dantelarroy/figjam-console-mcp">GitHub</a>
 				<a href="https://www.npmjs.com/package/figma-console-mcp">npm</a>
-				<a href="https://southleft.com/insights/ai/figma-console-mcp-ai-powered-design-system-management/">Blog</a>
-				<a href="https://github.com/sponsors/southleft" class="sponsor-link"><svg viewBox="0 0 16 16"><path d="M4.25 2.5c-1.336 0-2.75 1.164-2.75 3 0 2.15 1.58 4.144 3.365 5.682A20.6 20.6 0 0 0 8 13.393a20.6 20.6 0 0 0 3.135-2.211C12.92 9.644 14.5 7.65 14.5 5.5c0-1.836-1.414-3-2.75-3-1.373 0-2.609.986-3.029 2.456a.749.749 0 0 1-1.442 0C6.859 3.486 5.623 2.5 4.25 2.5"/></svg>Sponsor</a>
+				<a href="https://github.com/Dantelarroy/figjam-console-mcp">Blog</a>
+				<a href="https://github.com/Dantelarroy" class="sponsor-link"><svg viewBox="0 0 16 16"><path d="M4.25 2.5c-1.336 0-2.75 1.164-2.75 3 0 2.15 1.58 4.144 3.365 5.682A20.6 20.6 0 0 0 8 13.393a20.6 20.6 0 0 0 3.135-2.211C12.92 9.644 14.5 7.65 14.5 5.5c0-1.836-1.414-3-2.75-3-1.373 0-2.609.986-3.029 2.456a.749.749 0 0 1-1.442 0C6.859 3.486 5.623 2.5 4.25 2.5"/></svg>Sponsor</a>
 			</nav>
 			<button class="theme-toggle" aria-label="Toggle theme">
 				<svg class="moon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -2707,19 +2707,19 @@ export default {
 	<div class="mobile-menu" id="mobileMenu">
 		<div class="mobile-menu-header">
 			<a href="/" class="logo">
-				<img src="https://docs.figma-console-mcp.southleft.com/logo/light.svg" alt="Figma Console MCP" class="logo-dark">
-				<img src="https://docs.figma-console-mcp.southleft.com/logo/dark.svg" alt="Figma Console MCP" class="logo-light" style="display: none;">
+				<img src="https://github.com/Dantelarroy/figjam-console-mcp/logo/light.svg" alt="Figma Console MCP" class="logo-dark">
+				<img src="https://github.com/Dantelarroy/figjam-console-mcp/logo/dark.svg" alt="Figma Console MCP" class="logo-light" style="display: none;">
 			</a>
 			<button class="mobile-menu-close" aria-label="Close menu">
 				<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
 			</button>
 		</div>
 		<nav class="mobile-menu-nav">
-			<a href="https://docs.figma-console-mcp.southleft.com">Documentation</a>
-			<a href="https://github.com/southleft/figma-console-mcp">GitHub</a>
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp">Documentation</a>
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp">GitHub</a>
 			<a href="https://www.npmjs.com/package/figma-console-mcp">npm</a>
-			<a href="https://southleft.com/insights/ai/figma-console-mcp-ai-powered-design-system-management/">Blog</a>
-			<a href="https://github.com/sponsors/southleft" style="color: #db61a2;">♥ Sponsor</a>
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp">Blog</a>
+			<a href="https://github.com/Dantelarroy" style="color: #db61a2;">♥ Sponsor</a>
 		</nav>
 	</div>
 
@@ -2731,11 +2731,11 @@ export default {
 				<h1>Your design system, now a <span class="highlight">living API</span></h1>
 				<p class="hero-subtitle">The most comprehensive MCP server for Figma. Give AI assistants deep access to your design tokens, components, and variables. Read, query, and even create designs programmatically through natural language.</p>
 				<div class="cta-row">
-					<a href="https://docs.figma-console-mcp.southleft.com" class="btn btn-primary">
+					<a href="https://github.com/Dantelarroy/figjam-console-mcp" class="btn btn-primary">
 						Read the Docs
 						<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 					</a>
-					<a href="https://github.com/southleft/figma-console-mcp" class="btn btn-secondary">
+					<a href="https://github.com/Dantelarroy/figjam-console-mcp" class="btn btn-secondary">
 						<svg fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
 						View on GitHub
 					</a>
@@ -2931,11 +2931,11 @@ export default {
 					<p>Setup varies based on your needs: remote mode for quick API access, or local mode for full plugin debugging. Our docs will guide you through the right path.</p>
 				</div>
 				<div class="getting-started-actions">
-					<a href="https://docs.figma-console-mcp.southleft.com/setup" class="btn btn-primary">
+					<a href="https://github.com/Dantelarroy/figjam-console-mcp/setup" class="btn btn-primary">
 						View Setup Guide
 						<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 					</a>
-					<a href="https://docs.figma-console-mcp.southleft.com/tools" class="btn btn-secondary">
+					<a href="https://github.com/Dantelarroy/figjam-console-mcp/tools" class="btn btn-secondary">
 						Explore Tools
 					</a>
 				</div>
@@ -2944,7 +2944,7 @@ export default {
 
 		<div class="grid">
 			<!-- Blog CTA -->
-			<a href="https://southleft.com/insights/ai/figma-console-mcp-ai-powered-design-system-management/" class="grid-cell blog-cell">
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp" class="grid-cell blog-cell">
 				<div class="blog-content">
 					<div class="blog-icon">
 						<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
@@ -2963,12 +2963,12 @@ export default {
 	</main>
 
 	<footer class="footer">
-		<p>MIT License. Built by <a href="https://southleft.com">Southleft</a></p>
+		<p>MIT License. Built for FigJam Console MCP</p>
 		<div class="footer-links">
-			<a href="https://docs.figma-console-mcp.southleft.com">Docs</a>
-			<a href="https://github.com/southleft/figma-console-mcp">GitHub</a>
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp">Docs</a>
+			<a href="https://github.com/Dantelarroy/figjam-console-mcp">GitHub</a>
 			<a href="https://www.npmjs.com/package/figma-console-mcp">npm</a>
-			<a href="https://github.com/sponsors/southleft" style="color: #db61a2;">♥ Sponsor</a>
+			<a href="https://github.com/Dantelarroy" style="color: #db61a2;">♥ Sponsor</a>
 		</div>
 	</footer>
 
