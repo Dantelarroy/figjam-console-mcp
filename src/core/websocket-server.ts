@@ -37,6 +37,7 @@ interface PendingRequest {
 export interface ConnectedFileInfo {
   fileName: string;
   fileKey: string | null;
+  editorType?: string;
   currentPage?: string;
   currentPageId?: string;
   connectedAt: number;
@@ -355,6 +356,7 @@ export class FigmaWebSocketServer extends EventEmitter {
       fileInfo: {
         fileName: data.fileName,
         fileKey,
+        editorType: typeof data.editorType === 'string' ? data.editorType : undefined,
         currentPage: data.currentPage,
         currentPageId: data.currentPageId || null,
         connectedAt: Date.now(),

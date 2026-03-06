@@ -2014,6 +2014,7 @@ figma.ui.onmessage = async (msg) => {
         fileInfo: {
           fileName: figma.root.name,
           fileKey: figma.fileKey || null,
+          editorType: figma.editorType,
           currentPage: figma.currentPage.name,
           currentPageId: figma.currentPage.id,
           selectionCount: selection ? selection.length : 0
