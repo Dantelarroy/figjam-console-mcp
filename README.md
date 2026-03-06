@@ -1,262 +1,135 @@
-# Figma Console MCP Server
+# FigJam Console MCP
 
-[![MCP](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io/)
-[![npm](https://img.shields.io/npm/v/figma-console-mcp)](https://www.npmjs.com/package/figma-console-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-docs.figma--console--mcp.southleft.com-0D9488)](https://docs.figma-console-mcp.southleft.com)
-[![Sponsor](https://img.shields.io/badge/Sponsor-southleft-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/southleft)
+A deterministic MCP server for managing FigJam boards programmatically.
 
-> **Your design system as an API.** Model Context Protocol server that bridges design and development—giving AI assistants complete access to Figma for **extraction**, **creation**, and **debugging**.
+## Overview
 
-> **🆕 v1.11.2 — Design System Kit for AI Code Generators:** Connect your Figma design system to Lovable, v0, and Replit via the remote MCP endpoint. `figma_get_design_system_kit` extracts tokens, component specs, and resolved styles in one call — so AI-generated code builds with your brand. [See changelog →](CHANGELOG.md)
+FigJam Console MCP provides a stable, spec-driven server layer for creating, querying, and organizing FigJam content through MCP.
 
-## What is this?
+The project is built around deterministic behavior:
+- explicit inputs and predictable outputs,
+- capability-aware execution (via `editorType`),
+- contract and smoke validation for milestones.
 
-Figma Console MCP connects AI assistants (like Claude) to Figma, enabling:
+## Key Capabilities
 
-- **🐛 Plugin debugging** - Capture console logs, errors, and stack traces
-- **📸 Visual debugging** - Take screenshots for context
-- **🎨 Design system extraction** - Pull variables, components, and styles
-- **✏️ Design creation** - Create UI components, frames, and layouts directly in Figma
-- **🔧 Variable management** - Create, update, rename, and delete design tokens
-- **⚡ Real-time monitoring** - Watch logs as plugins execute
-- **🔄 Three ways to install** - Remote SSE (OAuth, zero-setup), NPX (npm package), or Local Git (source code)
+### Infrastructure
+- FigJam desktop bridge
+- WebSocket ↔ MCP server runtime
+- Capability guard using `editorType`
 
----
+### Board Primitives
+- `createSticky`
+- `createConnector`
+- `createText`
+- `createSection`
+- `getBoardNodes`
+- `getStickies`
+- `getConnections`
 
-## ⚡ Quick Start
+### Workflow Tools
+- `bulkCreateStickies`
+- `findNodes`
+- `createCluster`
+- `summarizeBoard`
+- `autoLayoutBoard`
 
-### Choose Your Setup
+### Research Workspace Tools
+- `ingestResearchNotes`
+- `createReferenceWall`
+- `organizeByTheme`
+- `linkByRelation`
+- `generateResearchBoard`
 
-**First, decide what you want to do:**
+## Architecture
 
-| I want to... | Setup Method | Time |
-|--------------|--------------|------|
-| **Create and modify designs with AI** | [NPX Setup](#-npx-setup-recommended) (Recommended) | ~10 min |
-| **Contribute to the project** | [Local Git Setup](#for-contributors-local-git-mode) | ~15 min |
-| **Just explore my design data** (read-only) | [Remote SSE](#-remote-sse-read-only-exploration) | ~2 min |
+The current architecture is organized in layers:
 
-### ⚠️ Important: Capability Differences
+1. MCP server layer  
+   Local runtimes (`src/local.ts`, `src/figjam-local.ts`) register tools and handle MCP transport.
 
-| Capability | NPX / Local Git | Remote SSE |
-|------------|-----------------|------------|
-| Read design data | ✅ | ✅ |
-| **Create components & frames** | ✅ | ❌ |
-| **Edit existing designs** | ✅ | ❌ |
-| **Manage design tokens/variables** | ✅ | ❌ |
-| Desktop Bridge plugin | ✅ | ❌ |
-| **Total tools available** | **56+** | **16** |
+2. Bridge layer  
+   Desktop bridge plugins (`figjam-desktop-bridge/`, `figma-desktop-bridge/`) connect runtime events and board context via WebSocket.
 
-> **Bottom line:** Remote SSE is **read-only** with ~34% of the tools. If you want AI to actually design in Figma, use NPX Setup.
+3. Tooling layer  
+   FigJam primitives in `src/tools/` and registration wiring in `src/server/register-figjam-tools.ts`.
 
----
+4. Workflow layer  
+   Deterministic composition tools in `src/tools/workflows.ts`.
 
-### 🚀 NPX Setup (Recommended)
+5. Research workspace layer  
+   Higher-order deterministic board orchestration in `src/tools/research-workspace.ts`.
 
-**Best for:** Designers who want full AI-assisted design capabilities.
+6. Next layer (roadmap)  
+   DBI v1 deterministic indexing for stable identity, alias-based resolution, and metadata-first organization.
 
-**What you get:** All 57+ tools including design creation, variable management, and component instantiation.
+## Repository Structure
 
-#### Prerequisites
-
-- [ ] **Node.js 18+** — Check with `node --version` ([Download](https://nodejs.org))
-- [ ] **Figma Desktop** installed (not just the web app)
-- [ ] **An MCP client** (Claude Code, Cursor, Windsurf, Claude Desktop, etc.)
-
-#### Step 1: Get Your Figma Token
-
-1. Go to [Manage personal access tokens](https://help.figma.com/hc/en-us/articles/8085703771159-Manage-personal-access-tokens) in Figma Help
-2. Follow the steps to **create a new personal access token**
-3. Enter description: `Figma Console MCP`
-4. **Copy the token** — you won't see it again! (starts with `figd_`)
-
-#### Step 2: Configure Your MCP Client
-
-**Claude Code (CLI):**
-```bash
-claude mcp add figma-console -s user -e FIGMA_ACCESS_TOKEN=figd_YOUR_TOKEN_HERE -e ENABLE_MCP_APPS=true -- npx -y figma-console-mcp@latest
+```text
+src/
+  core/                    # runtime connectors, websocket server, capability guard
+  tools/                   # figjam primitives + workflows + research workspace tools
+  server/                  # figjam tool registration and server wiring
+  figjam-api/              # figjam client abstraction
+tests/                     # contract, policy audit, integration, scoring tests
+docs/
+  agent-playbooks/         # spec-driven workflow/playbook templates
+figjam-desktop-bridge/     # FigJam plugin bridge
+figma-desktop-bridge/      # Figma plugin bridge (shared runtime support)
 ```
 
-**Cursor / Windsurf / Claude Desktop:**
+## Quick Start
 
-Add to your MCP config file (see [Where to find your config file](#-where-to-find-your-config-file) below):
-
-```json
-{
-  "mcpServers": {
-    "figma-console": {
-      "command": "npx",
-      "args": ["-y", "figma-console-mcp@latest"],
-      "env": {
-        "FIGMA_ACCESS_TOKEN": "figd_YOUR_TOKEN_HERE",
-        "ENABLE_MCP_APPS": "true"
-      }
-    }
-  }
-}
-```
-
-#### 📂 Where to Find Your Config File
-
-If you're not sure where to put the JSON configuration above, here's where each app stores its MCP config:
-
-| App | macOS | Windows |
-|-----|-------|---------|
-| **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` |
-| **Claude Code (CLI)** | `~/.claude.json` | `%USERPROFILE%\.claude.json` |
-| **Cursor** | `~/.cursor/mcp.json` | `%USERPROFILE%\.cursor\mcp.json` |
-| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | `%USERPROFILE%\.codeium\windsurf\mcp_config.json` |
-
-> **Tip for designers:** The `~` symbol means your **home folder**. On macOS, that's `/Users/YourName/`. On Windows, it's `C:\Users\YourName\`. You can open these files in any text editor — even TextEdit or Notepad.
->
-> **Can't find the file?** If it doesn't exist yet, create it. The app will pick it up on its next restart. Make sure the entire file is valid JSON (watch for missing commas or brackets).
->
-> **Claude Code users:** You can skip manual editing entirely. Just run the `claude mcp add` command above and it handles everything for you.
-
-#### Step 3: Connect to Figma Desktop
-
-**Desktop Bridge Plugin:**
-1. Open Figma Desktop normally (no special flags needed)
-2. Go to **Plugins → Development → Import plugin from manifest...**
-3. Select `figma-desktop-bridge/manifest.json` from the figma-console-mcp directory
-   - **NPX users:** Run `npx figma-console-mcp@latest --print-path` to find the directory
-4. Run the plugin in your Figma file — it auto-connects via WebSocket (scans ports 9223–9232)
-
-> One-time setup. The plugin persists in your Development plugins list across sessions.
-
-#### Step 4: Restart Your MCP Client
-
-Restart your MCP client to load the new configuration.
-
-#### Step 5: Test It!
-
-```
-Check Figma status
-```
-→ Should show connection status with active WebSocket transport
-
-```
-Create a simple frame with a blue background
-```
-→ Should create a frame in Figma (confirms write access!)
-
-**📖 [Complete Setup Guide](docs/setup.md)**
-
----
-
-### For Contributors: Local Git Mode
-
-**Best for:** Developers who want to modify source code or contribute to the project.
-
-**What you get:** Same 57+ tools as NPX, plus full source code access.
-
-#### Quick Setup
+### 1) Install dependencies
 
 ```bash
-# Clone and build
-git clone https://github.com/southleft/figma-console-mcp.git
-cd figma-console-mcp
 npm install
-npm run build:local
 ```
 
-#### Configure Your MCP Client
-
-Add to your config file (see [Where to find your config file](#-where-to-find-your-config-file)):
-
-```json
-{
-  "mcpServers": {
-    "figma-console": {
-      "command": "node",
-      "args": ["/absolute/path/to/figma-console-mcp/dist/local.js"],
-      "env": {
-        "FIGMA_ACCESS_TOKEN": "figd_YOUR_TOKEN_HERE",
-        "ENABLE_MCP_APPS": "true"
-      }
-    }
-  }
-}
-```
-
-Then follow [NPX Steps 3-5](#step-3-connect-to-figma-desktop) above.
-
-**📖 [Complete Setup Guide](docs/setup.md)**
-
----
-
-### 📡 Remote SSE (Read-Only Exploration)
-
-**Best for:** Quickly evaluating the tool or read-only design data extraction.
-
-**What you get:** 22 read-only tools — view data, take screenshots, read logs, design-code parity. **Cannot create or modify designs.**
-
-#### Claude Desktop (UI Method)
-
-1. Open Claude Desktop → **Settings** → **Connectors**
-2. Click **"Add Custom Connector"**
-3. Enter:
-   - **Name:** `Figma Console (Read-Only)`
-   - **URL:** `https://figma-console-mcp.southleft.com/sse`
-4. Click **"Add"** — Done! ✅
-
-OAuth authentication happens automatically when you first use design system tools.
-
-#### Claude Code
-
-> **⚠️ Known Issue:** Claude Code's native `--transport sse` has a [bug](https://github.com/anthropics/claude-code/issues/2466). Use `mcp-remote` instead:
+### 2) Run FigJam MCP server
 
 ```bash
-claude mcp add figma-console -s user -- npx -y mcp-remote@latest https://figma-console-mcp.southleft.com/sse
+npm run dev:figjam
 ```
 
-**💡 Tip:** For full capabilities, use [NPX Setup](#-npx-setup-recommended) instead of Remote SSE.
+### 3) Connect FigJam bridge plugin
 
-#### Other Clients (Cursor, Windsurf, etc.)
+1. Open FigJam Desktop.
+2. Import `figjam-desktop-bridge/manifest.json` as a development plugin.
+3. Run the plugin in your board.
+4. Confirm connection handshake (`GET_FILE_INFO`) and active WebSocket.
 
-```json
-{
-  "mcpServers": {
-    "figma-console": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://figma-console-mcp.southleft.com/sse"]
-    }
-  }
-}
+### 4) Run tests
+
+```bash
+npm test
 ```
 
-#### Upgrading to Full Capabilities
+## Development Workflow
 
-Ready for design creation? Follow the [NPX Setup](#-npx-setup-recommended) guide above.
+This repository follows a spec-driven process codified in:
 
-**📖 [Complete Setup Guide](docs/setup.md)**
+- `AGENTS.md`
+- `docs/agent-playbooks/spec-driven-workflow.md`
+- `docs/agent-playbooks/milestone-template.md`
+- `docs/agent-playbooks/validation-template.md`
+- `docs/agent-playbooks/change-request-template.md`
 
----
+Default phase order:
+`validate → analyze → specify → plan → implement → validate`
 
-## 📊 Installation Method Comparison
+## Roadmap
 
-| Feature | NPX (Recommended) | Local Git | Remote SSE |
-|---------|-------------------|-----------|------------|
-| **Setup time** | ~10 minutes | ~15 minutes | ~2 minutes |
-| **Total tools** | **56+** | **56+** | **22** (read-only) |
-| **Design creation** | ✅ | ✅ | ❌ |
-| **Variable management** | ✅ | ✅ | ❌ |
-| **Component instantiation** | ✅ | ✅ | ❌ |
-| **Desktop Bridge plugin** | ✅ | ✅ | ❌ |
-| **Variables (no Enterprise)** | ✅ | ✅ | ❌ |
-| **Console logs** | ✅ (zero latency) | ✅ (zero latency) | ✅ |
-| **Read design data** | ✅ | ✅ | ✅ |
-| **Authentication** | PAT (manual) | PAT (manual) | OAuth (automatic) |
-| **Automatic updates** | ✅ (`@latest`) | Manual (`git pull`) | ✅ |
-| **Source code access** | ❌ | ✅ | ❌ |
+Near-term roadmap focuses on production hardening:
 
-> **Key insight:** Remote SSE is read-only with ~34% of the tools. Use NPX for full capabilities.
+- DBI v1 deterministic board indexing
+- alias-based deterministic resolution
+- screenshot validation as complementary visual QA
+- reliability and observability improvements
 
-**📖 [Complete Feature Comparison](docs/mode-comparison.md)**
+## License
 
----
-
-## 🎯 Test Your Connection
+MIT — see [LICENSE](LICENSE).
 
 After setup, try these prompts:
 
