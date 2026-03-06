@@ -6,6 +6,7 @@ import { registerConnectorTools } from "../tools/connectors.js";
 import { registerTextTools } from "../tools/text.js";
 import { registerSectionTools } from "../tools/sections.js";
 import { registerBoardTools } from "../tools/board.js";
+import { registerWorkflowTools } from "../tools/workflows.js";
 
 export function registerFigJamTools(server: McpServer, getClient: GetFigJamClient): void {
 	registerStickyTools(server, getClient);
@@ -14,4 +15,5 @@ export function registerFigJamTools(server: McpServer, getClient: GetFigJamClien
 	registerTextTools(server, getClient);
 	registerSectionTools(server, getClient);
 	registerBoardTools(server, getClient);
+	registerWorkflowTools(server, getClient);
 }

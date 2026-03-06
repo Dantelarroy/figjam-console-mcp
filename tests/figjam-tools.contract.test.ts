@@ -32,6 +32,7 @@ function createMockClient() {
 		getBoardNodes: jest.fn().mockResolvedValue([{ id: "n1", type: "STICKY" }]),
 		getStickies: jest.fn().mockResolvedValue([{ id: "s1", type: "STICKY", text: "A" }]),
 		getConnections: jest.fn().mockResolvedValue([{ id: "c1", type: "CONNECTOR" }]),
+		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
 	};
 }
 
@@ -50,8 +51,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 10 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(10);
+	it("registers the 15 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(15);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -65,6 +66,11 @@ describe("FigJam tools contract", () => {
 				"getBoardNodes",
 				"getStickies",
 				"getConnections",
+				"bulkCreateStickies",
+				"findNodes",
+				"createCluster",
+				"summarizeBoard",
+				"autoLayoutBoard",
 			]),
 		);
 	});

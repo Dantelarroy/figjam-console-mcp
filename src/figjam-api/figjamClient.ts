@@ -58,6 +58,12 @@ export interface CreateSectionInput {
 	height?: number;
 }
 
+export interface MoveNodeInput {
+	nodeId: string;
+	x: number;
+	y: number;
+}
+
 export class FigJamClient {
 	constructor(private readonly getConnector: () => Promise<IFigmaConnector>) {}
 
@@ -273,6 +279,31 @@ return connectors.map((connector) => ({
   width: connector.width,
   height: connector.height,
 }));
+`,
+			12000,
+		);
+	}
+
+	async moveNode(input: MoveNodeInput): Promise<FigJamNodeSummary> {
+		return this.execute<FigJamNodeSummary>(
+			`
+const input = ${JSON.stringify(input)};
+const node = await figma.getNodeByIdAsync(input.nodeId);
+if (!node) throw new Error("Node not found: " + input.nodeId);
+if (typeof node.x !== "number" || typeof node.y !== "number") {
+  throw new Error("Node does not support positioning: " + node.type);
+}
+node.x = input.x;
+node.y = input.y;
+return {
+  id: node.id,
+  name: node.name,
+  type: node.type,
+  x: node.x,
+  y: node.y,
+  width: typeof node.width === "number" ? node.width : undefined,
+  height: typeof node.height === "number" ? node.height : undefined
+};
 `,
 			12000,
 		);
