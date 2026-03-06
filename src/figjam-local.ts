@@ -7,6 +7,11 @@ import { createChildLogger } from "./core/logger.js";
 import { FigmaWebSocketServer } from "./core/websocket-server.js";
 import { WebSocketConnector } from "./core/websocket-connector.js";
 import type { IFigmaConnector } from "./core/figma-connector.js";
+import { FigmaAPI } from "./core/figma-api.js";
+import { registerFigmaAPITools } from "./core/figma-tools.js";
+import { registerDesignCodeTools } from "./core/design-code-tools.js";
+import { registerCommentTools } from "./core/comment-tools.js";
+import { registerDesignSystemTools } from "./core/design-system-tools.js";
 import { FigJamClient } from "./figjam-api/figjamClient.js";
 import { registerFigJamTools } from "./server/register-figjam-tools.js";
 import {
@@ -18,6 +23,7 @@ import {
 	cleanupStaleFigJamPortFiles,
 	discoverActiveFigJamInstances,
 } from "./server/figjam-port-discovery.js";
+import { installGuardedToolWrapper } from "./core/guarded-tool-wrapper.js";
 
 const logger = createChildLogger({ component: "figjam-local-server" });
 
@@ -28,6 +34,8 @@ class LocalFigJamMCP {
 	private wsActualPort: number | null = null;
 	private connector: IFigmaConnector | null = null;
 	private figjamClient: FigJamClient | null = null;
+	private figmaAPI: FigmaAPI | null = null;
+	private variablesCache: Map<string, { data: any; timestamp: number }> = new Map();
 
 	constructor() {
 		this.server = new McpServer(
@@ -104,6 +112,26 @@ class LocalFigJamMCP {
 		return this.figjamClient;
 	}
 
+	private async getFigmaAPI(): Promise<FigmaAPI> {
+		if (!this.figmaAPI) {
+			const accessToken = process.env.FIGMA_ACCESS_TOKEN;
+			if (!accessToken) {
+				throw new Error(
+					"FIGMA_ACCESS_TOKEN not configured. Set it as an environment variable.",
+				);
+			}
+			this.figmaAPI = new FigmaAPI({ accessToken });
+		}
+		return this.figmaAPI;
+	}
+
+	private getCurrentFileUrl(): string | null {
+		const fileInfo = this.wsServer?.getConnectedFileInfo();
+		if (!fileInfo?.fileKey) return null;
+		// Build a URL compatible with upstream extractFileKey() helpers.
+		return `https://www.figma.com/board/${fileInfo.fileKey}/FigJam-Board`;
+	}
+
 	private registerStatusTools(): void {
 		this.server.tool("figjam_get_status", "Get FigJam bridge and MCP connection status.", {}, async () => {
 			const connectedFiles = this.wsServer?.getConnectedFiles() || [];
@@ -175,7 +203,47 @@ class LocalFigJamMCP {
 	}
 
 	private registerTools(): void {
+		installGuardedToolWrapper(this.server, {
+			getConnectedFileInfo: () => this.wsServer?.getConnectedFileInfo() || null,
+			getCurrentUrl: () => this.getCurrentFileUrl(),
+			getDesktopConnector: () => this.getConnector(),
+		});
+
 		this.registerStatusTools();
+
+		// Upstream parity tool surface (guard layer handles FigJam capability gating).
+		registerFigmaAPITools(
+			this.server,
+			() => this.getFigmaAPI(),
+			() => this.getCurrentFileUrl(),
+			undefined,
+			undefined,
+			undefined,
+			this.variablesCache,
+			undefined,
+			() => this.getConnector(),
+		);
+		registerDesignCodeTools(
+			this.server,
+			() => this.getFigmaAPI(),
+			() => this.getCurrentFileUrl(),
+			this.variablesCache,
+			undefined,
+			() => this.getConnector(),
+		);
+		registerCommentTools(
+			this.server,
+			() => this.getFigmaAPI(),
+			() => this.getCurrentFileUrl(),
+		);
+		registerDesignSystemTools(
+			this.server,
+			() => this.getFigmaAPI(),
+			() => this.getCurrentFileUrl(),
+			this.variablesCache,
+		);
+
+		// FigJam-native tools remain additive.
 		registerFigJamTools(this.server, () => this.getFigJamClient());
 	}
 
