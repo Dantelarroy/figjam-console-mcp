@@ -49,6 +49,7 @@ import {
 } from "./core/port-discovery.js";
 import { registerTokenBrowserApp } from "./apps/token-browser/server.js";
 import { registerDesignSystemDashboardApp } from "./apps/design-system-dashboard/server.js";
+import { installGuardedToolWrapper } from "./core/guarded-tool-wrapper.js";
 
 const logger = createChildLogger({ component: "local-server" });
 
@@ -471,6 +472,12 @@ If Design Systems Assistant MCP is not available, install it from: https://githu
 	 * Register all MCP tools
 	 */
 	private registerTools(): void {
+		installGuardedToolWrapper(this.server, {
+			getConnectedFileInfo: () => this.wsServer?.getConnectedFileInfo() || null,
+			getCurrentUrl: () => this.getCurrentFileUrl(),
+			getDesktopConnector: () => this.getDesktopConnector(),
+		});
+
 		// Tool 1: Get Console Logs
 		this.server.tool(
 			"figma_get_console_logs",

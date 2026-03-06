@@ -213,3 +213,5 @@ Temporary Items
 
 # Internal notes and drafts
 .notes/
+# Local temporary smoke/debug scripts
+tmp_figjam_*.mjs

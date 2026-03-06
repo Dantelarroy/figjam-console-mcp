@@ -8,6 +8,16 @@
 		"declarationMap": true,
 		"sourceMap": true
 	},
-	"include": ["src/local.ts", "src/core/**/*.ts", "src/browser/base.ts", "src/browser/local.ts", "src/apps/**/server.ts"],
+	"include": [
+		"src/local.ts",
+		"src/figjam-local.ts",
+		"src/core/**/*.ts",
+		"src/browser/base.ts",
+		"src/browser/local.ts",
+		"src/apps/**/server.ts",
+		"src/figjam-api/**/*.ts",
+		"src/server/**/*.ts",
+		"src/tools/**/*.ts"
+	],
 	"exclude": ["src/index.ts", "src/browser/cloudflare.ts", "src/test-browser.ts", "node_modules", "dist"]
 }

@@ -8,6 +8,21 @@ console.log('🌉 [Desktop Bridge] Plugin loaded and ready');
 
 // Show minimal UI - compact status indicator
 figma.showUI(__html__, { width: 120, height: 36, visible: true, themeColors: true });
+var IS_FIGJAM = String(figma.editorType || '').toLowerCase() === 'figjam';
+
+function createVariablesUnavailableData() {
+  return {
+    success: true,
+    timestamp: Date.now(),
+    fileKey: figma.fileKey || null,
+    variables: [],
+    variableCollections: [],
+    capabilities: {
+      variablesApiAvailable: false,
+      reason: 'Variables API not available in FigJam'
+    }
+  };
+}
 
 // ============================================================================
 // CONSOLE CAPTURE — Intercept console.* in the QuickJS sandbox and forward
@@ -64,6 +79,15 @@ figma.showUI(__html__, { width: 120, height: 36, visible: true, themeColors: tru
 
 // Immediately fetch and send variables data to UI
 (async () => {
+  if (IS_FIGJAM) {
+    console.warn('🌉 [Desktop Bridge] Variables API not available in FigJam; skipping variables fetch');
+    figma.ui.postMessage({
+      type: 'VARIABLES_DATA',
+      data: createVariablesUnavailableData()
+    });
+    return;
+  }
+
   try {
     console.log('🌉 [Desktop Bridge] Fetching variables...');
 
@@ -697,6 +721,17 @@ figma.ui.onmessage = async (msg) => {
   // REFRESH_VARIABLES - Re-fetch and send all variables data
   // ============================================================================
   else if (msg.type === 'REFRESH_VARIABLES') {
+    if (IS_FIGJAM) {
+      console.warn('🌉 [Desktop Bridge] Variables API not available in FigJam; skipping variables refresh');
+      figma.ui.postMessage({
+        type: 'REFRESH_VARIABLES_RESULT',
+        requestId: msg.requestId,
+        success: true,
+        data: createVariablesUnavailableData()
+      });
+      return;
+    }
+
     try {
       console.log('🌉 [Desktop Bridge] Refreshing variables data...');
 

@@ -23,6 +23,7 @@ import { registerFigmaAPITools } from "./core/figma-tools.js";
 import { registerDesignCodeTools } from "./core/design-code-tools.js";
 import { registerCommentTools } from "./core/comment-tools.js";
 import { registerDesignSystemTools } from "./core/design-system-tools.js";
+import { installGuardedToolWrapper } from "./core/guarded-tool-wrapper.js";
 // Note: MCP Apps (Token Browser, Dashboard) are only available in local mode
 // They require Node.js file system APIs for serving HTML that don't work in Cloudflare Workers
 
@@ -334,6 +335,10 @@ export class FigmaConsoleMCPv3 extends McpAgent {
 	}
 
 	async init() {
+		installGuardedToolWrapper(this.server, {
+			getCurrentUrl: () => this.browserManager?.getCurrentUrl() || null,
+		});
+
 		// Tool 1: Get Console Logs
 		this.server.tool(
 			"figma_get_console_logs",
@@ -1099,6 +1104,9 @@ export default {
 			const statelessServer = new McpServer({
 				name: "Figma Console MCP",
 				version: "1.11.2",
+			});
+			installGuardedToolWrapper(statelessServer, {
+				getCurrentUrl: () => null,
 			});
 
 			// Register REST API tools with the authenticated Figma API
