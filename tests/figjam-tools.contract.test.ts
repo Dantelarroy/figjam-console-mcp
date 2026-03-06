@@ -51,8 +51,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 15 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(15);
+	it("registers the 20 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(20);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -71,6 +71,11 @@ describe("FigJam tools contract", () => {
 				"createCluster",
 				"summarizeBoard",
 				"autoLayoutBoard",
+				"ingestResearchNotes",
+				"createReferenceWall",
+				"organizeByTheme",
+				"linkByRelation",
+				"generateResearchBoard",
 			]),
 		);
 	});
