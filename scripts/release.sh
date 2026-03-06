@@ -269,7 +269,7 @@ echo -e "${BOLD}8. CHANGELOG.md scaffold${NC}"
 CHANGELOG="$ROOT/CHANGELOG.md"
 TODAY=$(date +%Y-%m-%d)
 NEW_HEADER="## [$VERSION] - $TODAY"
-COMPARISON_LINK="[$VERSION]: https://github.com/southleft/figma-console-mcp/compare/v${CURRENT_VERSION}...v${VERSION}"
+COMPARISON_LINK="[$VERSION]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v${CURRENT_VERSION}...v${VERSION}"
 
 if grep -qF "## [$VERSION]" "$CHANGELOG" 2>/dev/null; then
   echo -e "  ${YELLOW}SKIP${NC} CHANGELOG.md — version $VERSION header already exists"

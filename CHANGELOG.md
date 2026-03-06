@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.9.1] - 2026-02-11
 
 ### Added
-- **`FIGMA_WS_HOST` environment variable** — Override the WebSocket server bind address (default: `localhost`). Set to `0.0.0.0` when running inside Docker so the host machine can reach the MCP server. (Thanks [@mikeziri](https://github.com/mikeziri) — [#10](https://github.com/southleft/figma-console-mcp/pull/10))
+- **`FIGMA_WS_HOST` environment variable** — Override the WebSocket server bind address (default: `localhost`). Set to `0.0.0.0` when running inside Docker so the host machine can reach the MCP server. (Thanks [@mikeziri](https://github.com/mikeziri) — [#10](https://github.com/Dantelarroy/figjam-console-mcp/pull/10))
 
 ## [1.9.0] - 2026-02-10
 
@@ -269,24 +269,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-time Figma Desktop Bridge plugin
 - Support for both local (stdio) and Cloudflare Workers deployment
 
-[1.10.0]: https://github.com/southleft/figma-console-mcp/compare/v1.9.1...v1.10.0
-[1.9.1]: https://github.com/southleft/figma-console-mcp/compare/v1.9.0...v1.9.1
-[1.9.0]: https://github.com/southleft/figma-console-mcp/compare/v1.8.0...v1.9.0
-[1.8.0]: https://github.com/southleft/figma-console-mcp/compare/v1.7.0...v1.8.0
-[1.7.0]: https://github.com/southleft/figma-console-mcp/compare/v1.6.4...v1.7.0
-[1.6.4]: https://github.com/southleft/figma-console-mcp/compare/v1.6.3...v1.6.4
-[1.6.3]: https://github.com/southleft/figma-console-mcp/compare/v1.6.2...v1.6.3
-[1.6.2]: https://github.com/southleft/figma-console-mcp/compare/v1.6.1...v1.6.2
-[1.6.1]: https://github.com/southleft/figma-console-mcp/compare/v1.6.0...v1.6.1
-[1.6.0]: https://github.com/southleft/figma-console-mcp/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/southleft/figma-console-mcp/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/southleft/figma-console-mcp/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/southleft/figma-console-mcp/compare/v1.2.5...v1.3.0
-[1.2.5]: https://github.com/southleft/figma-console-mcp/compare/v1.2.4...v1.2.5
-[1.2.4]: https://github.com/southleft/figma-console-mcp/compare/v1.2.3...v1.2.4
-[1.2.3]: https://github.com/southleft/figma-console-mcp/compare/v1.2.2...v1.2.3
-[1.2.2]: https://github.com/southleft/figma-console-mcp/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/southleft/figma-console-mcp/compare/v1.1.1...v1.2.1
-[1.1.1]: https://github.com/southleft/figma-console-mcp/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/southleft/figma-console-mcp/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/southleft/figma-console-mcp/releases/tag/v1.0.0
+[1.10.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.9.1...v1.10.0
+[1.9.1]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.6.4...v1.7.0
+[1.6.4]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.6.3...v1.6.4
+[1.6.3]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.6.2...v1.6.3
+[1.6.2]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.2.5...v1.3.0
+[1.2.5]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.2.4...v1.2.5
+[1.2.4]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.1.1...v1.2.1
+[1.1.1]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/Dantelarroy/figjam-console-mcp/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Dantelarroy/figjam-console-mcp/releases/tag/v1.0.0
