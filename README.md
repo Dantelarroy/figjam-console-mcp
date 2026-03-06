@@ -142,6 +142,43 @@ For clients that use WebSocket bridge status, use:
 ws://localhost:9323
 ```
 
+#### Claude Desktop (stdio MCP)
+
+Edit Claude Desktop config:
+
+`~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Add:
+
+```json
+{
+  "mcpServers": {
+    "figjam-console-mcp": {
+      "command": "npm",
+      "args": ["run", "dev:figjam"],
+      "cwd": "/absolute/path/to/figjam-console-mcp"
+    }
+  }
+}
+```
+
+Then restart Claude Desktop.
+
+#### Codex CLI (stdio MCP)
+
+From anywhere:
+
+```bash
+codex mcp add figjam-console-mcp -- \
+  /bin/zsh -lc 'cd /absolute/path/to/figjam-console-mcp && npm run dev:figjam'
+```
+
+To verify:
+
+```bash
+codex mcp list
+```
+
 ### 4. Run a minimal smoke sequence
 
 Run these calls in order once the bridge is connected:
