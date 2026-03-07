@@ -31,6 +31,7 @@ function createMockClient() {
 		})),
 		createSection: jest.fn().mockResolvedValue({ id: "sec-1", type: "SECTION" }),
 		createText: jest.fn().mockResolvedValue({ id: "txt-1", type: "TEXT" }),
+		createLink: jest.fn().mockResolvedValue({ id: "link-1", type: "LINK_UNFURL", text: "https://example.com" }),
 		createConnector: jest.fn().mockResolvedValue({ id: "conn-1", type: "CONNECTOR" }),
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
 		getBoardNodes: jest.fn().mockResolvedValue([

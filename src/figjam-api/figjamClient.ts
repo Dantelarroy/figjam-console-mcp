@@ -50,6 +50,13 @@ export interface CreateTextInput {
 	fontSize?: number;
 }
 
+export interface CreateLinkInput {
+	url: string;
+	title?: string;
+	x?: number;
+	y?: number;
+}
+
 export interface CreateSectionInput {
 	name?: string;
 	x?: number;
@@ -197,6 +204,69 @@ return { id: textNode.id, name: textNode.name, type: textNode.type, x: textNode.
 		);
 	}
 
+	async createLink(input: CreateLinkInput): Promise<FigJamNodeSummary> {
+		return this.execute<FigJamNodeSummary>(
+			`
+const input = ${JSON.stringify(input)};
+if (typeof figma.createLinkPreviewAsync !== "function") {
+  throw new Error("Link preview API is not available in this FigJam runtime");
+}
+
+let linkNode = null;
+try {
+  linkNode = await figma.createLinkPreviewAsync(input.url);
+} catch (error) {
+  throw new Error("Failed to create link preview: " + (error && error.message ? error.message : String(error)));
+}
+
+if (!linkNode) {
+  throw new Error("Link preview API returned an empty node");
+}
+
+if (typeof input.x === "number" && typeof linkNode.x === "number") linkNode.x = input.x;
+if (typeof input.y === "number" && typeof linkNode.y === "number") linkNode.y = input.y;
+if (typeof input.title === "string" && input.title.trim().length > 0 && typeof linkNode.name === "string") {
+  linkNode.name = input.title.trim();
+}
+if (!linkNode.parent) figma.currentPage.appendChild(linkNode);
+
+// Strict quality gate: only keep rich cards/embeds.
+if (linkNode.type === "LINK_UNFURL") {
+  const data = linkNode.linkUnfurlData || {};
+  const title = typeof data.title === "string" ? data.title.trim() : "";
+  const description = typeof data.description === "string" ? data.description.trim() : "";
+  const hasThumbnail = !!(data.thumbnailUrl || data.thumbnail);
+  const hasFavicon = !!(data.favicon || data.faviconUrl);
+  const isRich = Boolean(title || description || hasThumbnail || hasFavicon);
+  if (!isRich) {
+    linkNode.remove();
+    throw new Error("Link preview exists but has no rich metadata (title/description/thumbnail/favicon).");
+  }
+}
+
+if (typeof linkNode.setPluginData === "function") {
+  linkNode.setPluginData("figjam.link.url", input.url);
+  if (typeof input.title === "string" && input.title.trim().length > 0) {
+    linkNode.setPluginData("figjam.link.title", input.title.trim());
+  }
+}
+
+const urlValue = typeof linkNode.url === "string" ? linkNode.url : input.url;
+return {
+  id: linkNode.id,
+  name: linkNode.name,
+  type: linkNode.type,
+  x: linkNode.x,
+  y: linkNode.y,
+  width: linkNode.width,
+  height: linkNode.height,
+  text: urlValue
+};
+`,
+			12000,
+		);
+	}
+
 	async createSection(input: CreateSectionInput): Promise<FigJamNodeSummary> {
 		return this.execute<FigJamNodeSummary>(
 			`
@@ -230,6 +300,10 @@ function serialize(node) {
   if (node.type === "STICKY" && node.text) out.text = node.text.characters;
   if (node.type === "TEXT" && typeof node.characters === "string") out.text = node.characters;
   if (node.type === "SHAPE_WITH_TEXT" && node.text) out.text = node.text.characters;
+  if (node.type === "LINK_UNFURL") {
+    if (typeof node.url === "string") out.text = node.url;
+    else if (node.link && typeof node.link.url === "string") out.text = node.link.url;
+  }
   if (node.type === "CONNECTOR") {
     out.connectorStart = node.connectorStart || null;
     out.connectorEnd = node.connectorEnd || null;

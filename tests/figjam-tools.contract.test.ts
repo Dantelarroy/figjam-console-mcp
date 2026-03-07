@@ -26,6 +26,7 @@ function createMockClient() {
 		updateSticky: jest.fn().mockResolvedValue({ id: "sticky-1", type: "STICKY", text: "Updated" }),
 		deleteSticky: jest.fn().mockResolvedValue({ deleted: true, nodeId: "sticky-1" }),
 		createShape: jest.fn().mockResolvedValue({ id: "shape-1", type: "SHAPE_WITH_TEXT" }),
+		createLink: jest.fn().mockResolvedValue({ id: "link-1", type: "LINK_UNFURL", text: "https://example.com" }),
 		createConnector: jest.fn().mockResolvedValue({ id: "conn-1", type: "CONNECTOR" }),
 		createText: jest.fn().mockResolvedValue({ id: "text-1", type: "TEXT", text: "Hello" }),
 		createSection: jest.fn().mockResolvedValue({ id: "section-1", type: "SECTION" }),
@@ -51,8 +52,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 20 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(20);
+	it("registers the 21 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(21);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -60,6 +61,7 @@ describe("FigJam tools contract", () => {
 				"updateSticky",
 				"deleteSticky",
 				"createShape",
+				"createLink",
 				"createConnector",
 				"createText",
 				"createSection",
@@ -78,6 +80,21 @@ describe("FigJam tools contract", () => {
 				"generateResearchBoard",
 			]),
 		);
+	});
+
+	it("validates createLink schema and returns MCP response envelope", async () => {
+		const tool = server._getTool("createLink");
+		expect(validate("createLink", { url: "https://example.com", x: 1, y: 2 }).success).toBe(true);
+		expect(validate("createLink", { url: "https://example.com", title: "Example" }).success).toBe(
+			true,
+		);
+		expect(validate("createLink", { url: "not-a-url" }).success).toBe(false);
+
+		const result = await tool.handler({ url: "https://example.com", x: 10, y: 20 });
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.link.id).toBe("link-1");
+		expect(data.link.type).toBe("LINK_UNFURL");
 	});
 
 	it("validates createSticky schema and returns MCP response envelope", async () => {

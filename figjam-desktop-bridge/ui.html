@@ -511,8 +511,14 @@
       /**
        * Remove a connection from the active list and update compat state.
        */
-      function removeConnection(port) {
-        activeConnections = activeConnections.filter(function(c) { return c.port !== port; });
+      function removeConnection(port, wsInstance) {
+        activeConnections = activeConnections.filter(function(c) {
+          if (c.port !== port) return true;
+          // When multiple sockets temporarily exist on the same port (handoff/reconnect),
+          // remove only the closed socket so the newer live one is preserved.
+          if (wsInstance && c.ws !== wsInstance) return true;
+          return false;
+        });
         updateCompatState();
       }
 
@@ -731,7 +737,7 @@
 
         activeWs.onclose = function(event) {
           // Remove this connection from active list
-          removeConnection(port);
+          removeConnection(port, activeWs);
           console.log('[MCP Bridge] WebSocket disconnected from port ' + port + ' (' + activeConnections.length + ' server(s) remaining)');
 
           // If replaced by same file reconnecting (e.g., plugin reloaded), stop

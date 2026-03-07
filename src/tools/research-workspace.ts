@@ -444,6 +444,15 @@ async function createReferenceWallInternal(
 			const x = origin.x + layout.sectionPadding + (i % 4) * layout.columnGap;
 			const y = origin.y + 80 + Math.floor(i / 4) * layout.rowGap;
 			try {
+				if (ref.url) {
+					try {
+						const linkNode = await client.createLink({ url: ref.url, x, y });
+						referenceStickyIds.push(linkNode.id);
+						continue;
+					} catch {
+						// Fallback to sticky text when link card APIs are unavailable.
+					}
+				}
 				const sticky = await client.createSticky({ text: rendered, x, y });
 				referenceStickyIds.push(sticky.id);
 			} catch (error) {
@@ -499,11 +508,18 @@ async function createReferenceWallInternal(
 					.filter(Boolean)
 					.join("\n");
 				try {
-					const sticky = await client.createSticky({
-						text: rendered,
-						x: sectionX + layout.sectionPadding,
-						y: sectionY + 45 + i * layout.rowGap,
-					});
+					const x = sectionX + layout.sectionPadding;
+					const y = sectionY + 45 + i * layout.rowGap;
+					if (ref.url) {
+						try {
+							const linkNode = await client.createLink({ url: ref.url, x, y });
+							referenceStickyIds.push(linkNode.id);
+							continue;
+						} catch {
+							// Fallback to sticky text when link card APIs are unavailable.
+						}
+					}
+					const sticky = await client.createSticky({ text: rendered, x, y });
 					referenceStickyIds.push(sticky.id);
 				} catch (error) {
 					const msg = error instanceof Error ? error.message : String(error);

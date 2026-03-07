@@ -21,6 +21,7 @@ This repository is focused on:
 
 ### Board primitives
 - `createSticky`
+- `createLink` (native card preview)
 - `createConnector`
 - `createText`
 - `createSection`
@@ -60,6 +61,7 @@ This repository is focused on:
 | `updateSticky` | Updates sticky content and/or geometry by `nodeId`. |
 | `deleteSticky` | Deletes a sticky by `nodeId`. |
 | `createShape` | Creates `rectangle`, `circle`, or `diamond` (optional text). |
+| `createLink` | Creates a native `LINK_UNFURL` card from a URL. This tool is strict: it returns an error when the runtime or URL metadata cannot produce a rich card preview. |
 | `createConnector` | Creates a connector between `fromNodeId` and `toNodeId`. |
 | `createText` | Creates a text node with optional position/font size. |
 | `createSection` | Creates a section container in the board. |
@@ -249,6 +251,13 @@ Expected behavior:
 - status reports active connection,
 - created nodes appear in the board,
 - read tools return the created nodes.
+
+## Recent Updates
+
+- Added strict `createLink` tool for native FigJam link cards (`LINK_UNFURL` only).
+- Added deterministic error contract for non-rich link previews (no silent fallback to sticky/text).
+- Fixed bridge reconnection flapping in both bridge UIs (`figjam-desktop-bridge` and `figma-desktop-bridge`) by removing only the closed socket instance instead of all sockets for a port.
+- Live smoke validated insertion of 10 link cards in a connected board.
 
 ### 5. Use higher-level deterministic workflows
 
