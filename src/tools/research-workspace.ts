@@ -537,6 +537,24 @@ async function createReferenceWallInternal(
 		byKind.set(ref.kind, arr);
 	}
 
+	let nativeCount = 0;
+	let fallbackCount = 0;
+	let overlapCount = 0;
+	let orphanNoteCount = 0;
+	const renderedBoxes: Array<{ x: number; y: number; width: number; height: number }> = [];
+	const hasOverlap = (x: number, y: number, width: number, height: number) =>
+		renderedBoxes.some(
+			(box) =>
+				x < box.x + box.width &&
+				x + width > box.x &&
+				y < box.y + box.height &&
+				y + height > box.y,
+		);
+	const rememberBox = (x: number, y: number, width: number, height: number) => {
+		if (hasOverlap(x, y, width, height)) overlapCount += 1;
+		renderedBoxes.push({ x, y, width, height });
+	};
+
 	const nonEmptyKindCount = KIND_ORDER.reduce((acc, kind) => acc + ((byKind.get(kind) || []).length > 0 ? 1 : 0), 0);
 	try {
 		const root = await client.createSection({
@@ -623,6 +641,9 @@ async function createReferenceWallInternal(
 					});
 					referenceStickyIds.push(linkRendered.primary.id);
 					if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
+					if (linkRendered.mode === "native_link") nativeCount += 1;
+					else fallbackCount += 1;
+					rememberBox(x, y, 430, 340);
 					continue;
 				}
 				const sticky = await client.createSticky({
@@ -632,6 +653,7 @@ async function createReferenceWallInternal(
 					metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
 				});
 				referenceStickyIds.push(sticky.id);
+				rememberBox(x, y, 280, 240);
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
 				if (!continueOnError) throw new Error(`createReferenceWall sticky failed at ${i}: ${msg}`);
@@ -728,6 +750,9 @@ async function createReferenceWallInternal(
 						});
 						referenceStickyIds.push(linkRendered.primary.id);
 						if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
+						if (linkRendered.mode === "native_link") nativeCount += 1;
+						else fallbackCount += 1;
+						rememberBox(x, y, 430, 340);
 						continue;
 					}
 					const sticky = await client.createSticky({
@@ -738,6 +763,7 @@ async function createReferenceWallInternal(
 						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
 					});
 					referenceStickyIds.push(sticky.id);
+					rememberBox(x, y, 280, 240);
 				} catch (error) {
 					const msg = error instanceof Error ? error.message : String(error);
 					if (!continueOnError) throw new Error(`createReferenceWall sticky failed for ${kind}/${i}: ${msg}`);
@@ -769,6 +795,10 @@ async function createReferenceWallInternal(
 			created: referenceStickyIds.length,
 			reused: reusedReferenceIds.length,
 			failed: failed.length,
+			nativeCount,
+			fallbackCount,
+			overlapCount,
+			orphanNoteCount,
 			kinds: kindsCount,
 		},
 	};
@@ -1093,13 +1123,15 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 			};
 
 			const executeFlow = async (job?: ResearchJobRecord) => {
-				const phaseStartedAt = Date.now();
+				let phaseStartedAt = Date.now();
 				const markPhase = (phase: ResearchJobPhase, processedDelta = 0) => {
 					if (!job) return;
-					job.phaseDurations[job.phase] = (job.phaseDurations[job.phase] || 0) + (Date.now() - phaseStartedAt);
+					const now = Date.now();
+					job.phaseDurations[job.phase] = (job.phaseDurations[job.phase] || 0) + (now - phaseStartedAt);
 					job.phase = phase;
 					job.status = phase === "failed" || phase === "cancelled" ? phase : "running";
 					job.progress.processedItems = Math.min(job.progress.totalItems, job.progress.processedItems + processedDelta);
+					phaseStartedAt = now;
 				};
 				const checkCancelled = () => {
 					if (!job?.cancelRequested) return false;
@@ -1216,7 +1248,17 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					}
 				}
 
-				let referenceStep: { created: number; reused?: number; failed: number } | undefined;
+				let referenceStep:
+					| {
+							created: number;
+							reused?: number;
+							failed: number;
+							nativeCount: number;
+							fallbackCount: number;
+							overlapCount: number;
+							orphanNoteCount: number;
+					  }
+					| undefined;
 				if (references.length > 0) {
 					markPhase("createReferenceWall");
 					if (checkCancelled()) return { cancelled: true };
@@ -1232,7 +1274,15 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 							},
 							{ runId, dedupePolicy },
 						);
-						referenceStep = { created: wall.summary.created, reused: wall.summary.reused, failed: wall.summary.failed };
+						referenceStep = {
+							created: wall.summary.created,
+							reused: wall.summary.reused,
+							failed: wall.summary.failed,
+							nativeCount: wall.summary.nativeCount,
+							fallbackCount: wall.summary.fallbackCount,
+							overlapCount: wall.summary.overlapCount,
+							orphanNoteCount: wall.summary.orphanNoteCount,
+						};
 						if (wall.failed.length > 0) failed.push({ step: "createReferenceWall", error: `Partial reference wall failures: ${wall.failed.length}` });
 						if (job) job.progress.processedItems += references.length;
 					} catch (error) {
@@ -1346,6 +1396,16 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 						success: failed.length === 0,
 						failedSteps: failed.length,
 						usedSectionFallbackContainer,
+						nativeCount: referenceStep?.nativeCount || 0,
+						fallbackCount: referenceStep?.fallbackCount || 0,
+						overlapCount: referenceStep?.overlapCount || 0,
+						orphanNoteCount: referenceStep?.orphanNoteCount || 0,
+					},
+					telemetry: {
+						startedAt: job?.startedAt || nowIso(),
+						endedAt: nowIso(),
+						durationMs: job ? Math.max(0, Date.now() - Date.parse(job.startedAt)) : null,
+						phaseDurations: job?.phaseDurations || {},
 					},
 					renderValidation: await captureRenderValidation(client, validationCandidates),
 				};
