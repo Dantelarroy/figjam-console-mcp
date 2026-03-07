@@ -662,6 +662,11 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 		async (input) => {
 			try {
 				const client = await getClient();
+				const capabilities = await client.getRuntimeCapabilities().catch(() => ({
+					supportsSections: false,
+					supportsRichUnfurl: false,
+					supportsImageInsert: false,
+				}));
 				const runId = input.runId || createRunId();
 				const itemKey = input.itemKey || itemKeyFromItem(input, "by_url");
 				const created = await renderSingleReferenceCard(getClient, {
@@ -680,6 +685,7 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 						mode: created.mode,
 						runId,
 						itemKey,
+						capabilities,
 						alias: input.alias || null,
 						groupId: input.groupId || null,
 						containerId: input.containerId || null,
@@ -712,6 +718,11 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 		async ({ items, runId, dedupePolicy, layout, layoutPolicy, maxItemsPerBatch, linkPolicy, continueOnError }) => {
 			try {
 				const client = await getClient();
+				const capabilities = await client.getRuntimeCapabilities().catch(() => ({
+					supportsSections: false,
+					supportsRichUnfurl: false,
+					supportsImageInsert: false,
+				}));
 				const resolvedRunId = runId || createRunId();
 				const created: Array<Record<string, unknown>> = [];
 				const failed: Array<{ index: number; title: string; error: string }> = [];
@@ -874,6 +885,7 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 				return ok({
 					batch: {
 						runId: resolvedRunId,
+						capabilities,
 						layoutMode: layout.mode,
 						layoutPolicy,
 						total: items.length,

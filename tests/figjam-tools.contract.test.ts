@@ -37,6 +37,11 @@ function createMockClient() {
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
 		updateNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", name: "Updated node" }),
 		deleteNode: jest.fn().mockResolvedValue({ deleted: true, nodeId: "n1" }),
+		getRuntimeCapabilities: jest.fn().mockResolvedValue({
+			supportsSections: true,
+			supportsRichUnfurl: true,
+			supportsImageInsert: true,
+		}),
 		scanBoardState: jest.fn().mockResolvedValue({
 			fileKey: "file-key-1",
 			pageId: "0:1",

@@ -193,6 +193,12 @@ export interface CaptureNodeScreenshotResult {
 	bounds: { x: number; y: number; width: number; height: number };
 }
 
+export interface FigJamRuntimeCapabilities {
+	supportsSections: boolean;
+	supportsRichUnfurl: boolean;
+	supportsImageInsert: boolean;
+}
+
 export class FigJamClient {
 	constructor(private readonly getConnector: () => Promise<IFigmaConnector>) {}
 
@@ -210,6 +216,22 @@ ${userCode}
 			throw new Error(response?.error || "Unknown FigJam execution error");
 		}
 		return response.result as T;
+	}
+
+	async getRuntimeCapabilities(): Promise<FigJamRuntimeCapabilities> {
+		return this.execute<FigJamRuntimeCapabilities>(
+			`
+const supportsSections = typeof figma.createSection === "function";
+const supportsImageInsert = typeof figma.createImage === "function";
+const supportsRichUnfurl = typeof figma.createLinkPreviewAsync === "function";
+return {
+  supportsSections,
+  supportsRichUnfurl,
+  supportsImageInsert
+};
+`,
+			8000,
+		);
 	}
 
 	async createSticky(input: CreateStickyInput): Promise<FigJamNodeSummary> {

@@ -500,6 +500,12 @@ async function createReferenceWallInternal(
 	}> = [];
 	let rootSectionId: string | undefined;
 	let titleNodeId: string | undefined;
+	const capabilities = await client.getRuntimeCapabilities().catch(() => ({
+		supportsSections: false,
+		supportsRichUnfurl: false,
+		supportsImageInsert: false,
+	}));
+	let usedSectionFallbackContainer = false;
 	const runId = options?.runId;
 	const dedupePolicy = options?.dedupePolicy || "by_url";
 	const existingByItemKey = new Map<string, FlatNode>();
@@ -547,7 +553,25 @@ async function createReferenceWallInternal(
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		if (isSectionUnsupportedError(msg)) {
-			rootSectionId = undefined;
+			usedSectionFallbackContainer = true;
+			try {
+				const fallback = await client.createShape({
+					type: "rectangle",
+					text: title,
+					x: origin.x,
+					y: origin.y,
+					width:
+						layout.mode === "columns_by_kind"
+							? Math.max(1600, nonEmptyKindCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
+							: 2200,
+					height: Math.max(1200, 240 + Math.ceil(references.length / 2) * layout.rowGap),
+					role: "section_fallback",
+					metadata: { sectionName: title, sectionFallback: true, runId: options?.runId || null },
+				});
+				rootSectionId = fallback.id;
+			} catch {
+				rootSectionId = undefined;
+			}
 		} else if (!continueOnError) throw new Error(`createReferenceWall root section failed: ${msg}`);
 		else failed.push({ step: "createRootSection", error: msg });
 	}
@@ -635,7 +659,24 @@ async function createReferenceWallInternal(
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
 				if (isSectionUnsupportedError(msg)) {
-					kindSectionId = undefined;
+					usedSectionFallbackContainer = true;
+					try {
+						const fallback = await client.createShape({
+							type: "rectangle",
+							text: kind.toUpperCase(),
+							x: sectionX,
+							y: sectionY,
+							width: Math.max(520, layout.columnGap - 40),
+							height: Math.max(360, 120 + refs.length * layout.rowGap),
+							groupId: `kind:${kind}`,
+							role: "section_fallback",
+							metadata: { sectionName: kind, sectionFallback: true, runId: options?.runId || null },
+						});
+						kindSectionId = fallback.id;
+						kindSectionIds[kind] = kindSectionId;
+					} catch {
+						kindSectionId = undefined;
+					}
 				} else if (!continueOnError) throw new Error(`createReferenceWall kind section failed for ${kind}: ${msg}`);
 				else failed.push({ step: "createKindSection", kind, error: msg });
 			}
@@ -719,6 +760,8 @@ async function createReferenceWallInternal(
 			kindSectionIds,
 			titleNodeId,
 			referenceStickyIds,
+			usedSectionFallbackContainer,
+			capabilities,
 		},
 		failed,
 		summary: {
@@ -1068,6 +1111,12 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 				const failed: Array<{ step: string; error: string }> = [];
 				const { title, origin, notes, references, themes, createLinks, dryRunLayout, continueOnError, dedupePolicy } = input;
 				const client = await getClient();
+				const capabilities = await client.getRuntimeCapabilities().catch(() => ({
+					supportsSections: false,
+					supportsRichUnfurl: false,
+					supportsImageInsert: false,
+				}));
+				let usedSectionFallbackContainer = false;
 				const sectionIds: { intake?: string; references?: string; themes?: string; questions?: string; decisions?: string } = {};
 				const baseSections = [
 					{ key: "intake", x: origin.x, y: origin.y, name: `${title} - Intake` },
@@ -1096,7 +1145,27 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 						(sectionIds as Record<string, string>)[s.key] = section.id;
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
-						if (!isSectionUnsupportedError(msg)) {
+						if (isSectionUnsupportedError(msg)) {
+							usedSectionFallbackContainer = true;
+							try {
+								const fallback = await client.createShape({
+									type: "rectangle",
+									text: s.name,
+									x: s.x,
+									y: s.y,
+									width: 1000,
+									height: 760,
+									role: "section_fallback",
+									metadata: { runId, itemKey: `section:${toSlug(s.key)}`, sectionFallback: true },
+								});
+								(sectionIds as Record<string, string>)[s.key] = fallback.id;
+							} catch (fallbackError) {
+								const fallbackMsg =
+									fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+								if (!continueOnError) throw new Error(`Scaffold fallback failed at ${s.key}: ${fallbackMsg}`);
+								failed.push({ step: "scaffold", error: `Fallback section ${s.key}: ${fallbackMsg}` });
+							}
+						} else {
 							if (!continueOnError) throw new Error(`Scaffold failed at ${s.key}: ${msg}`);
 							failed.push({ step: "scaffold", error: `Section ${s.key}: ${msg}` });
 						}
@@ -1263,6 +1332,7 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					runId,
 					phase: "completed",
 					progress: { totalItems, processedItems: totalItems },
+					capabilities,
 					board: { title, sectionIds },
 					steps: {
 						ingestResearchNotes: ingestStep,
@@ -1275,6 +1345,7 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					summary: {
 						success: failed.length === 0,
 						failedSteps: failed.length,
+						usedSectionFallbackContainer,
 					},
 					renderValidation: await captureRenderValidation(client, validationCandidates),
 				};

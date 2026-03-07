@@ -34,6 +34,11 @@ function createMockClient() {
 		createLink: jest.fn().mockResolvedValue({ id: "link-1", type: "LINK_UNFURL", text: "https://example.com" }),
 		createConnector: jest.fn().mockResolvedValue({ id: "conn-1", type: "CONNECTOR" }),
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
+		getRuntimeCapabilities: jest.fn().mockResolvedValue({
+			supportsSections: true,
+			supportsRichUnfurl: true,
+			supportsImageInsert: true,
+		}),
 		getBoardNodes: jest.fn().mockResolvedValue([
 			{ id: "n1", type: "STICKY", text: "insight: onboarding drop-off", x: 0, y: 0, width: 100, height: 100 },
 			{ id: "n2", type: "TEXT", text: "source: interview-01", x: 200, y: 20, width: 120, height: 40 },

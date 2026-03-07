@@ -135,6 +135,19 @@ class LocalFigJamMCP {
 	private registerStatusTools(): void {
 		this.server.tool("figjam_get_status", "Get FigJam bridge and MCP connection status.", {}, async () => {
 			const connectedFiles = this.wsServer?.getConnectedFiles() || [];
+			let capabilities: {
+				supportsSections: boolean;
+				supportsRichUnfurl: boolean;
+				supportsImageInsert: boolean;
+			} | null = null;
+			if (this.wsServer?.isClientConnected()) {
+				try {
+					const client = await this.getFigJamClient();
+					capabilities = await client.getRuntimeCapabilities();
+				} catch {
+					capabilities = null;
+				}
+			}
 			return {
 				content: [
 					{
@@ -149,6 +162,7 @@ class LocalFigJamMCP {
 								connectedFiles: connectedFiles.length,
 							},
 							files: connectedFiles,
+							capabilities,
 							ready: Boolean(this.wsServer?.isClientConnected()),
 							hint: this.wsServer?.isClientConnected()
 								? "Bridge connected."
