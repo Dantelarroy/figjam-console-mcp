@@ -39,4 +39,4 @@
 - Smoke validation
 - Remaining risks
 - Next recommended step
-- Notion roadmap sync status (`FigJam Console MCP — Product Roadmap`, `31b2c914-8640-80dc-9124-f5fa64c5bf43`)
+- Notion roadmap DB sync status (`FigJam Console MCP — Product Roadmap`, `31b2c914-8640-8127-a4f6-cb425e1a3f2c`)

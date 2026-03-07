@@ -13,16 +13,19 @@ Repository-local operating rules for Codex or any repo-local coding agent.
 - Deterministic over implicit: prefer explicit inputs and deterministic logic; avoid hidden inference.
 - No silent contract drift: do not change existing tool contracts unless explicitly approved.
 
-## Notion Roadmap Context (Required)
-- Default Notion context page for this repository:
-  - Title: `FigJam Console MCP — Product Roadmap`
-  - Page ID: `31b2c914-8640-80dc-9124-f5fa64c5bf43`
+## Notion Roadmap Tracking (Required)
+- Source-of-truth tracking DB for this repository:
+  - Database title: `FigJam Console MCP — Product Roadmap`
+  - Database ID: `31b2c914-8640-8127-a4f6-cb425e1a3f2c`
+  - View URL: `https://www.notion.so/31b2c91486408127a4f6cb425e1a3f2c?v=31b2c9148640815aa6fe000c8eb87d4b`
 - At task start:
-  - read/use this page as project-state context when planning milestone work.
+  - read/query this database to understand current epics/tasks/status and use it as planning context.
+- During task execution:
+  - keep work mapped to DB items (create/update task entries when missing).
 - After every successful `git push`:
-  - append a short milestone update to this page (what changed, validation result, blockers/risks).
+  - update the corresponding DB item(s) with status/progress and a concise milestone note.
 - If Notion API is unavailable:
-  - report the exact error and provide a ready-to-paste update block in the final response.
+  - report exact error and provide a ready-to-paste DB row payload/update note in final response.
 
 ## Required Phase Order
 Follow this order unless the user explicitly asks otherwise:
