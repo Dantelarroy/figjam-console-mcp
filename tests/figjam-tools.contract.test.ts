@@ -291,11 +291,12 @@ describe("FigJam tools contract", () => {
 
 	it("validates figjam_render_reference_set schema and partial failure behavior", async () => {
 		const tool = server._getTool("figjam_render_reference_set");
-		expect(
-			validate("figjam_render_reference_set", {
-				items: [{ title: "A", url: "https://example.com" }],
-			}).success,
-		).toBe(true);
+			expect(
+				validate("figjam_render_reference_set", {
+					items: [{ title: "A", url: "https://example.com" }],
+					uiPreset: "dense",
+				}).success,
+			).toBe(true);
 		expect(validate("figjam_render_reference_set", { items: [] }).success).toBe(false);
 
 		client.createLink.mockRejectedValueOnce(new Error("Link preview unavailable"));
@@ -304,14 +305,42 @@ describe("FigJam tools contract", () => {
 				{ title: "A", url: "https://example.com" },
 				{ title: "B", url: "https://example.org" },
 			],
-			layout: { mode: "grid", originX: 0, originY: 0, columns: 2, gapX: 300, gapY: 250 },
+				layout: { mode: "grid", originX: 0, originY: 0, columns: 2, gapX: 300, gapY: 250 },
+				uiPreset: "dense",
+				linkPolicy: "native_only",
+				continueOnError: true,
+			});
+		expect(result.isError).toBeUndefined();
+			const data = JSON.parse(result.content[0].text);
+			expect(data.batch.total).toBe(2);
+			expect(data.batch.uiPreset).toBe("dense");
+			expect(data.batch.failedCount).toBe(1);
+		});
+
+	it("reflows column layout using measured card heights", async () => {
+		const tool = server._getTool("figjam_render_reference_set");
+		const createdLinks = [
+			{ id: "link-a", type: "LINK_UNFURL", width: 300, height: 100, text: "https://a.example" },
+			{ id: "link-b", type: "LINK_UNFURL", width: 300, height: 300, text: "https://b.example" },
+		];
+		client.createLink.mockImplementation(async () => createdLinks.shift());
+
+		const result = await tool.handler({
+			items: [
+				{ title: "A", url: "https://a.example" },
+				{ title: "B", url: "https://b.example" },
+			],
+			layout: { mode: "column", originX: 0, originY: 0, columns: 1, gapX: 300, gapY: 20 },
+			uiPreset: "dense",
 			linkPolicy: "native_only",
+			layoutPolicy: "auto_expand",
 			continueOnError: true,
 		});
+
 		expect(result.isError).toBeUndefined();
 		const data = JSON.parse(result.content[0].text);
-		expect(data.batch.total).toBe(2);
-		expect(data.batch.failedCount).toBe(1);
+		expect(data.batch.measuredCardHeights).toEqual([100, 300]);
+		expect(client.moveNode).toHaveBeenCalledWith({ nodeId: "link-b", x: 0, y: 124 });
 	});
 
 	it("validates figjam_read_board_state schema and output envelope", async () => {

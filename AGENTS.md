@@ -7,6 +7,25 @@ Repository-local operating rules for Codex or any repo-local coding agent.
 - These rules govern process, validation, and reporting.
 - Product specs still come from active task requests.
 
+## Product North Star (Mandatory)
+- This MCP is a **deterministic visual state layer for FigJam**.
+- The agent (Claude/Codex/etc.) owns research, analysis, semantic reasoning, and strategy.
+- This MCP owns only:
+  - render content into FigJam,
+  - read structured board state,
+  - organize/update existing board state deterministically.
+
+### Real Use Case
+- Designers and teams use an AI agent to gather references and produce structured outputs.
+- The MCP materializes those outputs into FigJam as stable visual artifacts (links, images, notes, sections, connectors, clusters).
+- The MCP returns board state in deterministic structures so the agent can reason and continue iterating.
+
+### Out of Scope (Do Not Implement in MCP Layer)
+- Autonomous web research/scraping.
+- Autonomous semantic clustering/summarization.
+- Autonomous creative or research strategy decisions.
+- Any hidden AI inference inside MCP tools.
+
 ## Core Operating Principles
 - Source-of-truth-first: validate assumptions against the canonical implementation/source before proposing or changing code.
 - Upstream parity first: when this repo mirrors upstream behavior/contracts, verify against upstream before modifying behavior.
@@ -40,6 +59,12 @@ Follow this order unless the user explicitly asks otherwise:
 - Do not implement before spec approval.
 - “Spec approved” means the user explicitly accepted inputs/outputs/error semantics and implementation scope.
 - If scope is ambiguous or conflicts with existing contracts, stop and ask.
+
+## Tool Design Guardrails
+- New tools must be composable and deterministic.
+- Prefer explicit selectors (`nodeId`, `alias`, `groupId`, `containerId`) over fuzzy matching.
+- Use DBI/index metadata as primary state source when available.
+- Screenshot/image checks are complementary QA only, never source of truth for state resolution.
 
 ## Baseline Safety Rule
 Before risky infra/runtime changes (registration paths, transport, guard layers, bridge semantics, broad refactors):

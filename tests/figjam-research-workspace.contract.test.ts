@@ -43,6 +43,7 @@ function createMockClient() {
 			{ id: "n1", type: "STICKY", text: "insight: onboarding drop-off", x: 0, y: 0, width: 100, height: 100 },
 			{ id: "n2", type: "TEXT", text: "source: interview-01", x: 200, y: 20, width: 120, height: 40 },
 			{ id: "n3", type: "SHAPE_WITH_TEXT", text: "theme: trust", x: 400, y: 60, width: 120, height: 80 },
+			{ id: "n5", type: "SECTION", name: "Trust section", x: 360, y: 40, width: 240, height: 240 },
 			{ id: "n4", type: "CONNECTOR", connectorStart: { endpointNodeId: "n1" }, connectorEnd: { endpointNodeId: "n3" } },
 		]),
 		getStickies: jest.fn().mockResolvedValue([
@@ -53,7 +54,21 @@ function createMockClient() {
 		]),
 		updateSticky: jest.fn(),
 		deleteSticky: jest.fn(),
-		createShape: jest.fn(),
+		createShape: jest.fn().mockImplementation(async () => ({
+			id: `shape-${Math.random().toString(16).slice(2, 8)}`,
+			type: "SHAPE_WITH_TEXT",
+			x: 0,
+			y: 0,
+			width: 100,
+			height: 100,
+		})),
+		updateNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
+		captureNodeScreenshot: jest.fn().mockResolvedValue({
+			nodeId: "n1",
+			format: "PNG",
+			byteLength: 12345,
+			bounds: { x: 0, y: 0, width: 100, height: 100 },
+		}),
 	};
 }
 
@@ -115,6 +130,8 @@ describe("FigJam research-workspace tools contract", () => {
 			],
 			origin: { x: 100, y: 100 },
 			layout: { mode: "columns_by_kind", columnGap: 200, rowGap: 120, sectionPadding: 20 },
+			uiPreset: "dense",
+			themeColorMode: "auto",
 			continueOnError: true,
 		});
 		expect(res.isError).toBeUndefined();
@@ -164,7 +181,8 @@ describe("FigJam research-workspace tools contract", () => {
 
 		const res = await tool.handler({
 			links: [
-				{ from: { nodeId: "n1" }, to: { nodeId: "n3" }, relation: "supports" },
+				{ from: { nodeId: "n1" }, to: { query: "trust" }, relation: "supports" },
+				{ from: { nodeId: "n5" }, to: { nodeId: "n3" }, relation: "related" },
 				{ from: { query: "missing" }, to: { nodeId: "n3" }, relation: "related" },
 			],
 			dedupeExisting: true,
@@ -172,29 +190,40 @@ describe("FigJam research-workspace tools contract", () => {
 		});
 		expect(res.isError).toBeUndefined();
 		const payload = JSON.parse(res.content[0].text);
-		expect(payload.summary.requested).toBe(2);
+		expect(payload.summary.requested).toBe(3);
 		expect(Array.isArray(payload.created)).toBe(true);
 		expect(Array.isArray(payload.skipped)).toBe(true);
+		expect(payload.created.length).toBe(0);
+		expect(payload.skipped.some((s: { reason: string }) => s.reason === "duplicate_link")).toBe(true);
+		expect(payload.skipped.some((s: { reason: string }) => s.reason === "invalid_endpoint_type")).toBe(true);
 	});
 
 	it("generateResearchBoard validates schema and returns step summaries", async () => {
 		const tool = server._getTool("generateResearchBoard");
 		expect(validate("generateResearchBoard", { title: "Board" }).success).toBe(true);
 
-		const res = await tool.handler({
-			title: "Research Board",
-			origin: { x: 0, y: 0 },
+			const res = await tool.handler({
+				title: "Research Board",
+				origin: { x: 0, y: 0 },
 			notes: [{ text: "User avoids onboarding", type: "insight", tags: ["onboarding"] }],
 			references: [{ label: "Interview #1", kind: "interview", tags: [] }],
 			themes: [{ name: "Trust", noteQueries: ["onboarding", "trust"] }],
 			createLinks: true,
 			dryRunLayout: true,
-			continueOnError: true,
-		});
-		expect(res.isError).toBeUndefined();
-		const payload = JSON.parse(res.content[0].text);
+			uiPreset: "dense",
+				headerMode: "full",
+				themeColorMode: "auto",
+				preRunCleanup: "none",
+				continueOnError: true,
+			});
+			expect(res.isError).toBeUndefined();
+			const payload = JSON.parse(res.content[0].text);
 		expect(payload.board.title).toBe("Research Board");
+		expect(payload.ui).toBeDefined();
+		expect(payload.ui.preset).toBe("dense");
+		expect(payload.board.headerIds).toBeDefined();
 		expect(payload.steps).toBeDefined();
-		expect(payload.summary).toBeDefined();
+			expect(payload.summary).toBeDefined();
+			expect(payload.steps.preRunCleanup).toBeDefined();
+		});
 	});
-});

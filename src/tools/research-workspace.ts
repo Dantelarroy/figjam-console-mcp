@@ -4,6 +4,14 @@ import type { FigJamClient, FigJamNodeSummary } from "../figjam-api/figjamClient
 import type { GetFigJamClient } from "../server/figjam-tooling.js";
 import { fail, ok } from "../server/figjam-tooling.js";
 import { createLinkWithImageFallback } from "./link-fallback.js";
+import {
+	RESEARCH_UI_PALETTE_VERSION,
+	resolveLayoutTokens,
+	resolveThemePalette,
+	type HeaderMode,
+	type ThemeColorMode,
+	type UiPreset,
+} from "./research-ui.js";
 
 type FlatNode = FigJamNodeSummary & {
 	connectorStart?: { endpointNodeId?: string } | null;
@@ -61,6 +69,7 @@ const createReferenceWallInputSchema = {
 				label: z.string().min(1).max(500),
 				url: z.string().url().optional(),
 				source: z.string().max(500).optional(),
+				theme: z.string().min(1).max(200).optional(),
 				kind: z
 					.enum(["paper", "article", "interview", "report", "dataset", "other"])
 					.default("other"),
@@ -76,12 +85,15 @@ const createReferenceWallInputSchema = {
 	}),
 	layout: z
 		.object({
-			mode: z.enum(["columns_by_kind", "single_grid"]).default("columns_by_kind"),
+			mode: z.enum(["columns_by_kind", "columns_by_theme", "single_grid"]).default("columns_by_theme"),
 			columnGap: z.number().min(0).default(460),
 			rowGap: z.number().min(0).default(320),
 			sectionPadding: z.number().min(0).default(56),
 		})
 		.default({}),
+	themeOrder: z.array(z.string().min(1).max(200)).default([]),
+	uiPreset: z.enum(["dense", "comfortable"]).default("dense"),
+	themeColorMode: z.enum(["auto", "explicit"]).default("auto"),
 	continueOnError: z.boolean().default(true),
 };
 
@@ -174,6 +186,7 @@ const generateResearchBoardInputSchema = {
 			z.object({
 				label: z.string().min(1).max(500),
 				url: z.string().url().optional(),
+				theme: z.string().min(1).max(200).optional(),
 				kind: z
 					.enum(["paper", "article", "interview", "report", "dataset", "other"])
 					.default("other"),
@@ -192,9 +205,16 @@ const generateResearchBoardInputSchema = {
 		.default([]),
 	createLinks: z.boolean().default(false),
 	dryRunLayout: z.boolean().default(true),
+	uiPreset: z.enum(["dense", "comfortable"]).default("dense"),
+	headerMode: z.enum(["full", "minimal"]).default("full"),
+	themeColorMode: z.enum(["auto", "explicit"]).default("auto"),
+	scaffoldMode: z.enum(["legacy", "clean"]).default("clean"),
+	notesMode: z.enum(["sticky", "none"]).default("none"),
+	referenceGrouping: z.enum(["theme", "kind"]).default("theme"),
 	executionMode: z.enum(["sync_small", "job"]).optional(),
 	dedupePolicy: z.enum(["by_url", "by_title", "strict"]).default("by_url"),
 	layoutPolicy: z.enum(["auto_expand", "strict"]).default("auto_expand"),
+	preRunCleanup: z.enum(["none", "delete_by_run"]).default("none"),
 	continueOnError: z.boolean().default(true),
 };
 
@@ -227,10 +247,178 @@ function sortByPosition(nodes: FlatNode[]): FlatNode[] {
 	});
 }
 
+async function cleanupNodesByRunId(
+	client: FigJamClient,
+	runId: string,
+	continueOnError: boolean,
+): Promise<{ deletedCount: number; failed: Array<{ nodeId: string; error: string }> }> {
+	const nodes = sortByPosition(
+		flattenNodes(await client.getBoardNodes()).filter((node) => {
+			const metadataRaw = node.pluginData?.["figjam.metadata"];
+			if (!metadataRaw) return false;
+			try {
+				const parsed = JSON.parse(metadataRaw) as Record<string, unknown>;
+				return parsed?.runId === runId;
+			} catch {
+				return false;
+			}
+		}),
+	);
+	const failed: Array<{ nodeId: string; error: string }> = [];
+	let deletedCount = 0;
+	for (const node of nodes) {
+		try {
+			await client.deleteNode(node.id);
+			deletedCount += 1;
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (!continueOnError) throw error;
+			failed.push({ nodeId: node.id, error: msg });
+		}
+	}
+	return { deletedCount, failed };
+}
+
 function textForNode(node: FlatNode): string {
 	if (typeof node.text === "string") return node.text;
 	if (typeof node.name === "string") return node.name;
 	return "";
+}
+
+const STOP_WORDS = new Set([
+	"a",
+	"an",
+	"and",
+	"are",
+	"as",
+	"at",
+	"be",
+	"by",
+	"for",
+	"from",
+	"in",
+	"is",
+	"it",
+	"of",
+	"on",
+	"or",
+	"that",
+	"the",
+	"this",
+	"to",
+	"with",
+]);
+
+const RELATION_ENDPOINT_TYPES = new Set(["STICKY", "TEXT", "SHAPE_WITH_TEXT", "LINK_UNFURL", "RECTANGLE"]);
+
+function tokenizeText(value: string): string[] {
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.split(/\s+/)
+		.map((token) => token.trim())
+		.filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+}
+
+function tokenSet(value: string): Set<string> {
+	return new Set(tokenizeText(value));
+}
+
+function textSimilarity(a: string, b: string): number {
+	const ta = tokenSet(a);
+	const tb = tokenSet(b);
+	if (ta.size === 0 || tb.size === 0) return 0;
+	let common = 0;
+	for (const token of ta) {
+		if (tb.has(token)) common += 1;
+	}
+	const denom = ta.size + tb.size - common;
+	if (denom <= 0) return 0;
+	return common / denom;
+}
+
+function nodeByIdMap(nodes: FlatNode[]): Map<string, FlatNode> {
+	return new Map(nodes.map((n) => [n.id, n]));
+}
+
+function nodeBounds(node: FlatNode): { x1: number; y1: number; x2: number; y2: number } | null {
+	if (typeof node.x !== "number" || typeof node.y !== "number") return null;
+	const width = typeof node.width === "number" && Number.isFinite(node.width) ? Math.max(1, node.width) : 180;
+	const height = typeof node.height === "number" && Number.isFinite(node.height) ? Math.max(1, node.height) : 120;
+	return { x1: node.x, y1: node.y, x2: node.x + width, y2: node.y + height };
+}
+
+function queryMatchScore(text: string, query: string): number {
+	const normalizedText = text.toLowerCase();
+	const normalizedQuery = query.trim().toLowerCase();
+	if (!normalizedQuery) return 0;
+	let score = normalizedText.includes(normalizedQuery) ? 4 : 0;
+	const textTokens = tokenSet(normalizedText);
+	const queryTokens = tokenizeText(normalizedQuery);
+	if (queryTokens.length > 0) {
+		let overlap = 0;
+		for (const token of queryTokens) {
+			if (textTokens.has(token)) overlap += 1;
+		}
+		score += overlap / queryTokens.length;
+	}
+	return score;
+}
+
+function buildThemeMembership(
+	notes: Array<{ id: string; renderedText: string }>,
+	themes: Array<{ name: string; noteQueries: string[] }>,
+): Map<string, string[]> {
+	const assignedByTheme = new Map<string, string[]>();
+	for (const theme of themes) assignedByTheme.set(theme.name, []);
+	if (themes.length === 0 || notes.length === 0) return assignedByTheme;
+
+	for (const note of notes) {
+		let bestThemeName = themes[0].name;
+		let bestScore = Number.NEGATIVE_INFINITY;
+		for (const theme of themes) {
+			const score = theme.noteQueries.reduce((acc, query) => acc + queryMatchScore(note.renderedText, query), 0);
+			if (score > bestScore) {
+				bestScore = score;
+				bestThemeName = theme.name;
+			}
+		}
+		if (bestScore <= 0) {
+			// Fallback keeps deterministic full coverage when queries are sparse.
+			bestThemeName = [...assignedByTheme.entries()].sort((a, b) => a[1].length - b[1].length || a[0].localeCompare(b[0]))[0]?.[0] || bestThemeName;
+		}
+		assignedByTheme.get(bestThemeName)?.push(note.id);
+	}
+	return assignedByTheme;
+}
+
+function buildIntraThemeLinks(
+	themes: Array<{ name: string; stickyIds: string[] }>,
+	textById: Map<string, string>,
+): Array<{ from: { nodeId: string }; to: { nodeId: string }; relation: "related"; label: undefined }> {
+	const links: Array<{ from: { nodeId: string }; to: { nodeId: string }; relation: "related"; label: undefined }> = [];
+	for (const theme of themes) {
+		const unique = [...new Set(theme.stickyIds)].filter((id) => textById.has(id));
+		if (unique.length < 2) continue;
+		const remaining = new Set(unique.slice(1));
+		let current = unique[0];
+		while (remaining.size > 0) {
+			let next: string | null = null;
+			let bestScore = Number.NEGATIVE_INFINITY;
+			for (const candidate of remaining) {
+				const score = textSimilarity(textById.get(current) || "", textById.get(candidate) || "");
+				if (score > bestScore) {
+					bestScore = score;
+					next = candidate;
+				}
+			}
+			if (!next) break;
+			links.push({ from: { nodeId: current }, to: { nodeId: next }, relation: "related", label: undefined });
+			remaining.delete(next);
+			current = next;
+		}
+	}
+	return links;
 }
 
 function inBbox(
@@ -311,6 +499,96 @@ function toSlug(value: string): string {
 		.slice(0, 60);
 }
 
+async function createBoardHeader(
+	client: FigJamClient,
+	input: {
+		title: string;
+		runId: string;
+		origin: { x: number; y: number };
+		headerMode: HeaderMode;
+		themeColorMode: ThemeColorMode;
+		themeCount: number;
+		referenceCount: number;
+		noteCount: number;
+	},
+) {
+	const palette = resolveThemePalette("board", input.themeColorMode);
+	const bg = await client.createShape({
+		type: "rectangle",
+		text: "",
+		x: input.origin.x,
+		y: input.origin.y - 140,
+		width: 3320,
+		height: input.headerMode === "minimal" ? 80 : 120,
+		fillColor: palette.sectionBg,
+		strokeColor: palette.sectionStroke,
+		strokeWeight: 2,
+		role: "board_header",
+		metadata: { runId: input.runId, itemKey: "board_header" },
+	});
+
+	const headerText = input.headerMode === "minimal"
+		? `${input.title}`
+		: `${input.title}  •  themes:${input.themeCount}  refs:${input.referenceCount}  notes:${input.noteCount}`;
+	const title = await client.createText({
+		text: headerText,
+		x: input.origin.x + 24,
+		y: input.origin.y - 112,
+		fontSize: input.headerMode === "minimal" ? 30 : 24,
+		role: "board_header_title",
+		metadata: { runId: input.runId, itemKey: "board_header_title" },
+	});
+	const stamp = await client.createText({
+		text: `run:${input.runId.slice(0, 16)}`,
+		x: input.origin.x + 24,
+		y: input.origin.y - 78,
+		fontSize: 14,
+		role: "board_header_meta",
+		metadata: { runId: input.runId, itemKey: "board_header_meta" },
+	});
+	return { bg, title, stamp };
+}
+
+async function createThemeHeaderBar(
+	client: FigJamClient,
+	input: {
+		runId?: string;
+		theme: string;
+		themeSlug: string;
+		x: number;
+		y: number;
+		width: number;
+		count: number;
+		themeColorMode: ThemeColorMode;
+	},
+) {
+	const palette = resolveThemePalette(input.theme, input.themeColorMode);
+	const bar = await client.createShape({
+		type: "rectangle",
+		text: "",
+		x: input.x,
+		y: input.y,
+		width: input.width,
+		height: 44,
+		fillColor: palette.headerBg,
+		strokeColor: palette.sectionStroke,
+		strokeWeight: 1,
+		groupId: `theme:${input.themeSlug}`,
+		role: "theme_header",
+			metadata: { runId: input.runId || "", itemKey: `theme_header:${input.themeSlug}` },
+	});
+	const title = await client.createText({
+		text: `${input.theme} (${input.count})`,
+		x: input.x + 12,
+		y: input.y + 10,
+		fontSize: 18,
+		groupId: `theme:${input.themeSlug}`,
+		role: "theme_header_label",
+			metadata: { runId: input.runId || "", itemKey: `theme_header_label:${input.themeSlug}` },
+	});
+	return { bar, title, palette };
+}
+
 type ResearchJobPhase =
 	| "queued"
 	| "scaffold"
@@ -374,17 +652,35 @@ function isSectionUnsupportedError(message: string): boolean {
 async function resolveRef(
 	allNodes: FlatNode[],
 	ref: { nodeId?: string; query?: string },
+	options?: { allowedTypes?: Set<string> },
 ): Promise<{ node: FlatNode | null; reason?: string }> {
+	const allowedTypes = options?.allowedTypes;
 	if (ref.nodeId) {
 		const byId = allNodes.find((n) => n.id === ref.nodeId) || null;
+		if (byId && allowedTypes && !allowedTypes.has(byId.type)) {
+			return { node: null, reason: `Node type not allowed: ${byId.type}` };
+		}
 		return byId ? { node: byId } : { node: null, reason: `Node not found: ${ref.nodeId}` };
 	}
 	if (ref.query) {
-		const q = ref.query.toLowerCase();
-		const candidates = sortByPosition(
-			allNodes.filter((n) => textForNode(n).toLowerCase().includes(q)),
-		);
-		if (candidates.length > 0) return { node: candidates[0] };
+		const q = ref.query.trim();
+		const candidates = allNodes
+			.filter((n) => {
+				if (allowedTypes && !allowedTypes.has(n.type)) return false;
+				return queryMatchScore(textForNode(n), q) > 0;
+			})
+			.map((n) => ({ node: n, score: queryMatchScore(textForNode(n), q) }))
+			.sort((a, b) => {
+				if (b.score !== a.score) return b.score - a.score;
+				const ay = typeof a.node.y === "number" ? a.node.y : Number.POSITIVE_INFINITY;
+				const by = typeof b.node.y === "number" ? b.node.y : Number.POSITIVE_INFINITY;
+				if (ay !== by) return ay - by;
+				const ax = typeof a.node.x === "number" ? a.node.x : Number.POSITIVE_INFINITY;
+				const bx = typeof b.node.x === "number" ? b.node.x : Number.POSITIVE_INFINITY;
+				if (ax !== bx) return ax - bx;
+				return a.node.id.localeCompare(b.node.id);
+			});
+		if (candidates.length > 0) return { node: candidates[0].node };
 		return { node: null, reason: `No node matched query: ${ref.query}` };
 	}
 	return { node: null, reason: "Missing nodeId/query" };
@@ -408,6 +704,24 @@ function createReferenceItemKey(
 	if (dedupePolicy === "by_title") return `t:${title}`;
 	if (dedupePolicy === "strict") return `u:${url}|t:${title}|k:${kind}`;
 	return `u:${url || `t:${title}`}`;
+}
+
+function estimateReferencePrimaryHeight(ref: { url?: string }, uiPreset: UiPreset): number {
+	if (!ref.url) return uiPreset === "comfortable" ? 230 : 210;
+	return uiPreset === "comfortable" ? 340 : 320;
+}
+
+function estimateReferencePrimaryWidth(ref: { url?: string }, uiPreset: UiPreset): number {
+	if (!ref.url) return uiPreset === "comfortable" ? 300 : 260;
+	return uiPreset === "comfortable" ? 420 : 400;
+}
+
+function nodeDimension(value: unknown, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function minNativeLinkHeight(uiPreset: UiPreset): number {
+	return uiPreset === "comfortable" ? 560 : 480;
 }
 
 async function ingestResearchNotesInternal(
@@ -486,14 +800,24 @@ async function ingestResearchNotesInternal(
 async function createReferenceWallInternal(
 	client: FigJamClient,
 	args: z.infer<z.ZodObject<typeof createReferenceWallInputSchema>>,
-	options?: { runId?: string; dedupePolicy?: "by_url" | "by_title" | "strict" },
+	options?: {
+		runId?: string;
+		dedupePolicy?: "by_url" | "by_title" | "strict";
+		uiPreset?: UiPreset;
+		themeColorMode?: ThemeColorMode;
+	},
 ) {
-	const { title, references, origin, layout, continueOnError } = args;
-	const kindSectionIds: Record<string, string | undefined> = {};
+	const { title, references, origin, layout, themeOrder, continueOnError } = args;
+	const groupSectionIds: Record<string, string | undefined> = {};
 	const referenceStickyIds: string[] = [];
 	const reusedReferenceIds: string[] = [];
 	const failed: Array<{
-		step: "createRootSection" | "createKindSection" | "createTitle" | "createReferenceSticky";
+		step:
+			| "createRootSection"
+			| "createKindSection"
+			| "createTitle"
+			| "createReferenceSticky"
+			| "reflowReferenceColumn";
 		index?: number;
 		kind?: string;
 		error: string;
@@ -505,6 +829,9 @@ async function createReferenceWallInternal(
 		supportsRichUnfurl: false,
 		supportsImageInsert: false,
 	}));
+	const uiPreset = options?.uiPreset || args.uiPreset || "dense";
+	const themeColorMode = options?.themeColorMode || args.themeColorMode || "auto";
+	const tokens = resolveLayoutTokens(uiPreset);
 	let usedSectionFallbackContainer = false;
 	const runId = options?.runId;
 	const dedupePolicy = options?.dedupePolicy || "by_url";
@@ -529,13 +856,21 @@ async function createReferenceWallInternal(
 		}
 	}
 
-	const byKind = new Map<string, typeof references>();
-	for (const k of KIND_ORDER) byKind.set(k, []);
+	const groupingMode = layout.mode === "columns_by_theme" ? "theme" : "kind";
+	const byGroup = new Map<string, typeof references>();
+	const normalizedThemeOrder = (themeOrder || []).map((v) => v.trim()).filter((v) => v.length > 0);
+	const orderedSeed = groupingMode === "theme" ? normalizedThemeOrder : [...KIND_ORDER];
+	for (const key of orderedSeed) byGroup.set(key, []);
 	for (const ref of references) {
-		const arr = byKind.get(ref.kind) || [];
+		const key = groupingMode === "theme" ? (ref.theme?.trim() || "Uncategorized") : ref.kind;
+		const arr = byGroup.get(key) || [];
 		arr.push(ref);
-		byKind.set(ref.kind, arr);
+		byGroup.set(key, arr);
 	}
+	const orderedGroups = [
+		...orderedSeed,
+		...Array.from(byGroup.keys()).filter((key) => !orderedSeed.includes(key)),
+	].filter((key, index, all) => all.indexOf(key) === index && (byGroup.get(key) || []).length > 0);
 
 	let nativeCount = 0;
 	let fallbackCount = 0;
@@ -555,17 +890,21 @@ async function createReferenceWallInternal(
 		renderedBoxes.push({ x, y, width, height });
 	};
 
-	const nonEmptyKindCount = KIND_ORDER.reduce((acc, kind) => acc + ((byKind.get(kind) || []).length > 0 ? 1 : 0), 0);
+	const nonEmptyGroupCount = orderedGroups.length;
+	const wallPalette = resolveThemePalette(title, themeColorMode);
 	try {
 		const root = await client.createSection({
 			name: title,
 			x: origin.x,
 			y: origin.y,
 			width:
-				layout.mode === "columns_by_kind"
-					? Math.max(1600, nonEmptyKindCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
-					: 2200,
+					layout.mode !== "single_grid"
+						? Math.max(1600, nonEmptyGroupCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
+						: 2200,
 			height: Math.max(1200, 240 + Math.ceil(references.length / 2) * layout.rowGap),
+			fillColor: wallPalette.sectionBg,
+			strokeColor: wallPalette.sectionStroke,
+			strokeWeight: 2,
 		});
 		rootSectionId = root.id;
 	} catch (error) {
@@ -578,14 +917,17 @@ async function createReferenceWallInternal(
 					text: title,
 					x: origin.x,
 					y: origin.y,
-					width:
-						layout.mode === "columns_by_kind"
-							? Math.max(1600, nonEmptyKindCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
+						width:
+						layout.mode !== "single_grid"
+							? Math.max(1600, nonEmptyGroupCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
 							: 2200,
-					height: Math.max(1200, 240 + Math.ceil(references.length / 2) * layout.rowGap),
-					role: "section_fallback",
-					metadata: { sectionName: title, sectionFallback: true, runId: options?.runId || null },
-				});
+						height: Math.max(1200, 240 + Math.ceil(references.length / 2) * layout.rowGap),
+						fillColor: wallPalette.sectionBg,
+						strokeColor: wallPalette.sectionStroke,
+						strokeWeight: 2,
+						role: "section_fallback",
+							metadata: { sectionName: title, sectionFallback: true, runId: options?.runId || "" },
+					});
 				rootSectionId = fallback.id;
 			} catch {
 				rootSectionId = undefined;
@@ -618,26 +960,27 @@ async function createReferenceWallInternal(
 						nodeId: existingNode.id,
 						role: "reference",
 						sourceUrl: ref.url,
-						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+							metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind },
 					});
 					referenceStickyIds.push(existingNode.id);
 					reusedReferenceIds.push(existingNode.id);
 					continue;
 				}
-				if (ref.url) {
-					const linkRendered = await createLinkWithImageFallback(async () => client, {
-						url: ref.url,
-						title: ref.label,
-						x,
-						y,
-						role: "reference",
-						preferNative: true,
-						groupId: `kind:${ref.kind}`,
-					});
+					if (ref.url) {
+						const linkRendered = await createLinkWithImageFallback(async () => client, {
+							url: ref.url,
+							title: ref.label,
+							x,
+							y,
+							uiPreset,
+							role: "reference",
+							preferNative: true,
+							groupId: `kind:${ref.kind}`,
+						});
 					await client.updateNode({
 						nodeId: linkRendered.primary.id,
 						sourceUrl: ref.url,
-						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+							metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind },
 					});
 					referenceStickyIds.push(linkRendered.primary.id);
 					if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
@@ -650,7 +993,7 @@ async function createReferenceWallInternal(
 					text: rendered,
 					x,
 					y,
-					metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+						metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind },
 				});
 				referenceStickyIds.push(sticky.id);
 				rememberBox(x, y, 280, 240);
@@ -661,23 +1004,33 @@ async function createReferenceWallInternal(
 			}
 		}
 	} else {
-		let kindIndex = 0;
-		for (const kind of KIND_ORDER) {
-			const refs = byKind.get(kind) || [];
-			if (refs.length === 0) continue;
-			const sectionX = origin.x + layout.sectionPadding + kindIndex * layout.columnGap;
-			const sectionY = origin.y + 84;
-			let kindSectionId: string | undefined;
-			try {
-				const kindSection = await client.createSection({
-					name: kind,
-					x: sectionX,
-					y: sectionY,
-					width: Math.max(520, layout.columnGap - 40),
-					height: Math.max(360, 120 + refs.length * layout.rowGap),
-				});
-				kindSectionId = kindSection.id;
-				kindSectionIds[kind] = kindSectionId;
+		let groupIndex = 0;
+			for (const groupLabel of orderedGroups) {
+				const refs = byGroup.get(groupLabel) || [];
+				if (refs.length === 0) continue;
+				const sectionX = origin.x + layout.sectionPadding + groupIndex * layout.columnGap;
+				const sectionY = origin.y + 84;
+				const cardGapY = Math.max(24, Math.floor(layout.rowGap * 0.12));
+				const estimatedColumnHeight =
+					tokens.headerToFirstCardGap +
+					44 +
+					refs.reduce(
+						(sum, ref) => sum + estimateReferencePrimaryHeight(ref, uiPreset) + cardGapY,
+						0,
+					) +
+					44;
+				let groupSectionId: string | undefined;
+				const groupSlug = `${groupingMode}:${toSlug(groupLabel)}`;
+				try {
+					const kindSection = await client.createSection({
+						name: groupLabel,
+						x: sectionX,
+						y: sectionY,
+						width: Math.max(520, layout.columnGap - 40),
+						height: Math.max(420, estimatedColumnHeight),
+					});
+				groupSectionId = kindSection.id;
+				groupSectionIds[groupLabel] = groupSectionId;
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
 				if (isSectionUnsupportedError(msg)) {
@@ -685,105 +1038,208 @@ async function createReferenceWallInternal(
 					try {
 						const fallback = await client.createShape({
 							type: "rectangle",
-							text: kind.toUpperCase(),
-							x: sectionX,
-							y: sectionY,
-							width: Math.max(520, layout.columnGap - 40),
-							height: Math.max(360, 120 + refs.length * layout.rowGap),
-							groupId: `kind:${kind}`,
+								text: groupLabel.toUpperCase(),
+								x: sectionX,
+								y: sectionY,
+								width: Math.max(520, layout.columnGap - 40),
+								height: Math.max(420, estimatedColumnHeight),
+								groupId: groupSlug,
 							role: "section_fallback",
-							metadata: { sectionName: kind, sectionFallback: true, runId: options?.runId || null },
+								metadata: { sectionName: groupLabel, sectionFallback: true, runId: options?.runId || "" },
 						});
-						kindSectionId = fallback.id;
-						kindSectionIds[kind] = kindSectionId;
+						groupSectionId = fallback.id;
+						groupSectionIds[groupLabel] = groupSectionId;
 					} catch {
-						kindSectionId = undefined;
+						groupSectionId = undefined;
 					}
-				} else if (!continueOnError) throw new Error(`createReferenceWall kind section failed for ${kind}: ${msg}`);
-				else failed.push({ step: "createKindSection", kind, error: msg });
+				} else if (!continueOnError) throw new Error(`createReferenceWall group section failed for ${groupLabel}: ${msg}`);
+				else failed.push({ step: "createKindSection", kind: groupLabel, error: msg });
 			}
 
 			try {
-				await client.createText({ text: kind.toUpperCase(), x: sectionX + 10, y: sectionY + 10, fontSize: 18 });
+				await createThemeHeaderBar(client, {
+					runId,
+					theme: groupLabel,
+					themeSlug: toSlug(groupLabel),
+					x: sectionX + 8,
+					y: sectionY + 8,
+					width: Math.max(500, layout.columnGap - 56),
+					count: refs.length,
+					themeColorMode,
+				});
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
-				if (!continueOnError) throw new Error(`createReferenceWall kind title failed for ${kind}: ${msg}`);
-				failed.push({ step: "createTitle", kind, error: msg });
+				if (!continueOnError) throw new Error(`createReferenceWall group title failed for ${groupLabel}: ${msg}`);
+				failed.push({ step: "createTitle", kind: groupLabel, error: msg });
 			}
 
-			for (let i = 0; i < refs.length; i += 1) {
-				const ref = refs[i];
-				const rendered = renderReferenceText(ref);
-				try {
-					const x = sectionX + 18;
-					const y = sectionY + 54 + i * layout.rowGap;
-					const itemKey = createReferenceItemKey(ref, dedupePolicy);
-					const existingNode = runId ? existingByItemKey.get(itemKey) : undefined;
-					if (existingNode) {
-						await client.moveNode({ nodeId: existingNode.id, x, y });
-						await client.updateNode({
-							nodeId: existingNode.id,
-							groupId: `kind:${kind}`,
+				const renderedInGroup: Array<{
+					nodeId: string;
+					x: number;
+					plannedY: number;
+					widthFallback: number;
+					heightFallback: number;
+					isNativeLink: boolean;
+				}> = [];
+				let cursorY = sectionY + 44 + tokens.headerToFirstCardGap;
+				for (let i = 0; i < refs.length; i += 1) {
+					const ref = refs[i];
+					const rendered = renderReferenceText(ref);
+					try {
+						const x = sectionX + 18;
+						const y = cursorY;
+						const itemKey = createReferenceItemKey(ref, dedupePolicy);
+						const existingNode = runId ? existingByItemKey.get(itemKey) : undefined;
+						if (existingNode) {
+							const existingWidth = nodeDimension(
+								existingNode.width,
+								estimateReferencePrimaryWidth(ref, uiPreset),
+							);
+							let existingHeight = nodeDimension(
+								existingNode.height,
+								estimateReferencePrimaryHeight(ref, uiPreset),
+							);
+							const existingIsNativeLink = existingNode.type === "LINK_UNFURL";
+							if (existingIsNativeLink) {
+								existingHeight = Math.max(existingHeight, minNativeLinkHeight(uiPreset));
+							}
+							await client.moveNode({ nodeId: existingNode.id, x, y });
+							await client.updateNode({
+								nodeId: existingNode.id,
+							groupId: groupSlug,
 							role: "reference",
 							sourceUrl: ref.url,
-							metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
-						});
-						referenceStickyIds.push(existingNode.id);
-						reusedReferenceIds.push(existingNode.id);
-						continue;
-					}
+								metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind, theme: ref.theme || "" },
+							});
+							referenceStickyIds.push(existingNode.id);
+							reusedReferenceIds.push(existingNode.id);
+							renderedInGroup.push({
+								nodeId: existingNode.id,
+								x,
+								plannedY: y,
+								widthFallback: existingWidth,
+								heightFallback: existingHeight,
+								isNativeLink: existingIsNativeLink,
+							});
+							cursorY += existingHeight + cardGapY;
+							continue;
+						}
 					if (ref.url) {
 						const linkRendered = await createLinkWithImageFallback(async () => client, {
 							url: ref.url,
 							title: ref.label,
 							x,
 							y,
+							uiPreset,
 							role: "reference",
 							preferNative: true,
-							groupId: `kind:${kind}`,
+							groupId: groupSlug,
 						});
 						await client.updateNode({
 							nodeId: linkRendered.primary.id,
-							groupId: `kind:${kind}`,
+							groupId: groupSlug,
 							sourceUrl: ref.url,
-							metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+								metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind, theme: ref.theme || "" },
 						});
 						referenceStickyIds.push(linkRendered.primary.id);
 						if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
 						if (linkRendered.mode === "native_link") nativeCount += 1;
 						else fallbackCount += 1;
-						rememberBox(x, y, 430, 340);
-						continue;
-					}
+							const widthFallback = nodeDimension(
+								linkRendered.primary?.width,
+								estimateReferencePrimaryWidth(ref, uiPreset),
+							);
+							let heightFallback = nodeDimension(
+								linkRendered.primary?.height,
+								estimateReferencePrimaryHeight(ref, uiPreset),
+							);
+							const isNativeLink = linkRendered.mode === "native_link";
+							if (isNativeLink) {
+								heightFallback = Math.max(heightFallback, minNativeLinkHeight(uiPreset));
+							}
+							renderedInGroup.push({
+								nodeId: linkRendered.primary.id,
+								x,
+								plannedY: y,
+								widthFallback,
+								heightFallback,
+								isNativeLink,
+							});
+							cursorY += heightFallback + cardGapY;
+							continue;
+						}
 					const sticky = await client.createSticky({
 						text: rendered,
 						x,
 						y,
-						groupId: `kind:${kind}`,
-						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+						groupId: groupSlug,
+						metadata: { runId: runId || "", itemKey, label: ref.label, kind: ref.kind, theme: ref.theme || "" },
 					});
 					referenceStickyIds.push(sticky.id);
-					rememberBox(x, y, 280, 240);
-				} catch (error) {
+						const widthFallback = nodeDimension(sticky.width, estimateReferencePrimaryWidth(ref, uiPreset));
+						const heightFallback = nodeDimension(sticky.height, estimateReferencePrimaryHeight(ref, uiPreset));
+						renderedInGroup.push({
+							nodeId: sticky.id,
+							x,
+							plannedY: y,
+							widthFallback,
+							heightFallback,
+							isNativeLink: false,
+						});
+						cursorY += heightFallback + cardGapY;
+					} catch (error) {
 					const msg = error instanceof Error ? error.message : String(error);
-					if (!continueOnError) throw new Error(`createReferenceWall sticky failed for ${kind}/${i}: ${msg}`);
-					failed.push({ step: "createReferenceSticky", index: i, kind, error: msg });
+					if (!continueOnError) throw new Error(`createReferenceWall sticky failed for ${groupLabel}/${i}: ${msg}`);
+					failed.push({ step: "createReferenceSticky", index: i, kind: groupLabel, error: msg });
 				}
 			}
-			kindIndex += 1;
+				if (renderedInGroup.length > 0) {
+					try {
+						const snapshotById = new Map(
+							flattenNodes(await client.getBoardNodes()).map((node) => [node.id, node]),
+						);
+						let measuredY = sectionY + 44 + tokens.headerToFirstCardGap;
+						for (const item of renderedInGroup) {
+							const measured = snapshotById.get(item.nodeId);
+							const width = nodeDimension(measured?.width, item.widthFallback);
+							let height = nodeDimension(measured?.height, item.heightFallback);
+							if (item.isNativeLink) {
+								height = Math.max(height, minNativeLinkHeight(uiPreset));
+							}
+							const targetY = measuredY;
+							const currentX = typeof measured?.x === "number" ? measured.x : item.x;
+							const currentY = typeof measured?.y === "number" ? measured.y : item.plannedY;
+							if (Math.abs(currentY - targetY) > 0.5 || Math.abs(currentX - item.x) > 0.5) {
+								await client.moveNode({ nodeId: item.nodeId, x: item.x, y: targetY });
+							}
+							rememberBox(item.x, targetY, width, height);
+							measuredY += height + cardGapY;
+						}
+					} catch (error) {
+						const msg = error instanceof Error ? error.message : String(error);
+						if (!continueOnError) {
+							throw new Error(`createReferenceWall reflow failed for ${groupLabel}: ${msg}`);
+						}
+						failed.push({ step: "reflowReferenceColumn", kind: groupLabel, error: msg });
+						for (const item of renderedInGroup) {
+							rememberBox(item.x, item.plannedY, item.widthFallback, item.heightFallback);
+						}
+					}
+				}
+			groupIndex += 1;
 		}
 	}
 
 	const kindsCount: Record<string, number> = {};
-	for (const k of KIND_ORDER) {
-		const count = (byKind.get(k) || []).length;
+	for (const k of orderedGroups) {
+		const count = (byGroup.get(k) || []).length;
 		if (count > 0) kindsCount[k] = count;
 	}
 
 	return {
 		wall: {
 			rootSectionId,
-			kindSectionIds,
+			kindSectionIds: groupSectionIds,
 			titleNodeId,
 			referenceStickyIds,
 			usedSectionFallbackContainer,
@@ -799,7 +1255,10 @@ async function createReferenceWallInternal(
 			fallbackCount,
 			overlapCount,
 			orphanNoteCount,
+			uiPreset,
+			paletteVersion: RESEARCH_UI_PALETTE_VERSION,
 			kinds: kindsCount,
+			groupingMode,
 		},
 	};
 }
@@ -830,7 +1289,7 @@ async function organizeByThemeInternal(
 		const resolved: FlatNode[] = [];
 
 		for (let r = 0; r < theme.noteRefs.length; r += 1) {
-			const resolution = await resolveRef(allNodes, theme.noteRefs[r]);
+			const resolution = await resolveRef(allNodes, theme.noteRefs[r], { allowedTypes: RELATION_ENDPOINT_TYPES });
 			if (!resolution.node) {
 				unresolvedRefs.push({ refIndex: r, reason: resolution.reason || "Unresolved" });
 			} else {
@@ -867,7 +1326,6 @@ async function organizeByThemeInternal(
 
 			const uniqueById = new Map<string, FlatNode>();
 			for (const node of resolved) {
-				if (node.type === "CONNECTOR" || node.type === "SECTION") continue;
 				uniqueById.set(node.id, node);
 			}
 
@@ -888,6 +1346,52 @@ async function organizeByThemeInternal(
 				});
 				stickyIds.push(node.id);
 				idx += 1;
+			}
+
+			if (clusterSectionId && stickyIds.length > 0) {
+				const snapshot = flattenNodes(await client.getBoardNodes());
+				const byId = nodeByIdMap(snapshot);
+				const marginX = 30;
+				const marginTop = 48;
+				const marginBottom = 30;
+				const titleNode = titleNodeId ? byId.get(titleNodeId) : null;
+				let minX = Number.POSITIVE_INFINITY;
+				let minY = Number.POSITIVE_INFINITY;
+				let maxX = Number.NEGATIVE_INFINITY;
+				let maxY = Number.NEGATIVE_INFINITY;
+
+				for (const stickyId of stickyIds) {
+					const measured = byId.get(stickyId);
+					if (!measured) continue;
+					const bounds = nodeBounds(measured);
+					if (!bounds) continue;
+					minX = Math.min(minX, bounds.x1);
+					minY = Math.min(minY, bounds.y1);
+					maxX = Math.max(maxX, bounds.x2);
+					maxY = Math.max(maxY, bounds.y2);
+				}
+				if (Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)) {
+					const sectionX = minX - marginX;
+					const sectionY = minY - marginTop;
+					const sectionWidth = Math.max(520, maxX - minX + marginX * 2);
+					const sectionHeight = Math.max(360, maxY - minY + marginTop + marginBottom);
+					await client.updateNode({
+						nodeId: clusterSectionId,
+						x: sectionX,
+						y: sectionY,
+						width: sectionWidth,
+						height: sectionHeight,
+						title: theme.name,
+					});
+					if (titleNodeId) {
+						await client.updateNode({
+							nodeId: titleNodeId,
+							x: sectionX + 12,
+							y: sectionY + 10,
+							text: titleNode ? textForNode(titleNode) || theme.name : theme.name,
+						});
+					}
+				}
 			}
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
@@ -946,15 +1450,23 @@ async function linkByRelationInternal(
 		toNodeId: string;
 		relation: "supports" | "contradicts" | "duplicates" | "depends_on" | "related";
 	}> = [];
-	const skipped: Array<{ index: number; reason: "duplicate_link" | "unresolved_endpoint" }> = [];
+	const skipped: Array<{
+		index: number;
+		reason: "duplicate_link" | "unresolved_endpoint" | "invalid_endpoint_type" | "same_node";
+	}> = [];
 	const failed: Array<{ index: number; error: string }> = [];
 
 	for (let i = 0; i < links.length; i += 1) {
 		const link = links[i];
-		const from = await resolveRef(allNodes, link.from);
-		const to = await resolveRef(allNodes, link.to);
+		const from = await resolveRef(allNodes, link.from, { allowedTypes: RELATION_ENDPOINT_TYPES });
+		const to = await resolveRef(allNodes, link.to, { allowedTypes: RELATION_ENDPOINT_TYPES });
 		if (!from.node || !to.node) {
-			skipped.push({ index: i, reason: "unresolved_endpoint" });
+			const unresolved = (from.reason || "").includes("not allowed") || (to.reason || "").includes("not allowed");
+			skipped.push({ index: i, reason: unresolved ? "invalid_endpoint_type" : "unresolved_endpoint" });
+			continue;
+		}
+		if (from.node.id === to.node.id) {
+			skipped.push({ index: i, reason: "same_node" });
 			continue;
 		}
 
@@ -995,10 +1507,36 @@ async function linkByRelationInternal(
 }
 
 async function captureRenderValidation(client: FigJamClient, candidateNodeIds: Array<string | undefined>) {
-	const nodeId = candidateNodeIds.find((id): id is string => typeof id === "string" && id.length > 0);
-	if (!nodeId) {
-		return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION" };
+	const targetNodeIds = [...new Set(candidateNodeIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+	if (targetNodeIds.length === 0) return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION", targetNodeIds: [], regionBounds: null, nodeCountInRegion: 0 };
+	let nodeId: string | null = targetNodeIds[0];
+	let regionBounds: { x: number; y: number; width: number; height: number } | null = null;
+	let nodeCountInRegion = 0;
+	try {
+		const flat = flattenNodes(await client.getBoardNodes());
+		const selected = flat.filter((n) => targetNodeIds.includes(n.id) && typeof n.x === "number" && typeof n.y === "number");
+		if (selected.length > 0) {
+			const minX = Math.min(...selected.map((n) => n.x || 0));
+			const minY = Math.min(...selected.map((n) => n.y || 0));
+			const maxX = Math.max(...selected.map((n) => (n.x || 0) + (n.width || 0)));
+			const maxY = Math.max(...selected.map((n) => (n.y || 0) + (n.height || 0)));
+			regionBounds = { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+			nodeCountInRegion = flat.filter((n) => inBbox(n, regionBounds!)).length;
+			const containerCandidate = selected.find(
+				(n) =>
+					typeof n.width === "number" &&
+					typeof n.height === "number" &&
+					n.x === regionBounds!.x &&
+					n.y === regionBounds!.y &&
+					n.width >= regionBounds!.width &&
+					n.height >= regionBounds!.height,
+			);
+			if (containerCandidate?.id) nodeId = containerCandidate.id;
+		}
+	} catch {
+		// Best effort.
 	}
+	if (!nodeId) return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION", targetNodeIds, regionBounds, nodeCountInRegion };
 	try {
 		const shot = await client.captureNodeScreenshot(nodeId, 2);
 		return {
@@ -1007,6 +1545,9 @@ async function captureRenderValidation(client: FigJamClient, candidateNodeIds: A
 			nodeId,
 			byteLength: shot.byteLength,
 			bounds: shot.bounds,
+			targetNodeIds,
+			regionBounds,
+			nodeCountInRegion,
 		};
 	} catch (error) {
 		return {
@@ -1014,6 +1555,9 @@ async function captureRenderValidation(client: FigJamClient, candidateNodeIds: A
 			ok: false,
 			nodeId,
 			error: error instanceof Error ? error.message : String(error),
+			targetNodeIds,
+			regionBounds,
+			nodeCountInRegion,
 		};
 	}
 }
@@ -1141,15 +1685,35 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					return true;
 				};
 				const failed: Array<{ step: string; error: string }> = [];
-				const { title, origin, notes, references, themes, createLinks, dryRunLayout, continueOnError, dedupePolicy } = input;
+					const {
+						title,
+						origin,
+					notes,
+					references,
+					themes,
+					createLinks,
+					dryRunLayout,
+					continueOnError,
+					dedupePolicy,
+					uiPreset,
+					headerMode,
+					themeColorMode,
+					scaffoldMode,
+					notesMode,
+						referenceGrouping,
+						preRunCleanup,
+					} = input;
+				const tokens = resolveLayoutTokens(uiPreset);
 				const client = await getClient();
 				const capabilities = await client.getRuntimeCapabilities().catch(() => ({
 					supportsSections: false,
 					supportsRichUnfurl: false,
 					supportsImageInsert: false,
 				}));
-				let usedSectionFallbackContainer = false;
-				const sectionIds: { intake?: string; references?: string; themes?: string; questions?: string; decisions?: string } = {};
+					let usedSectionFallbackContainer = false;
+					let cleanupStep: { mode: "none" | "delete_by_run"; deleted: number; failed: number } | undefined;
+					const sectionIds: { intake?: string; references?: string; themes?: string; questions?: string; decisions?: string } = {};
+				const headerIds: { boardHeaderNodeId?: string; boardHeaderTitleNodeId?: string; boardHeaderMetaNodeId?: string; themeHeaderNodeIds: string[] } = { themeHeaderNodeIds: [] };
 				const baseSections = [
 					{ key: "intake", x: origin.x, y: origin.y, name: `${title} - Intake` },
 					{ key: "references", x: origin.x + 1200, y: origin.y, name: `${title} - References` },
@@ -1158,38 +1722,88 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					{ key: "decisions", x: origin.x + 2400, y: origin.y + 900, name: `${title} - Decisions` },
 				] as const;
 
-				markPhase("scaffold");
-				if (checkCancelled()) return { cancelled: true };
-				for (const s of baseSections) {
+					markPhase("scaffold");
+					if (checkCancelled()) return { cancelled: true };
+					if (preRunCleanup === "delete_by_run") {
+						try {
+							const cleanup = await cleanupNodesByRunId(client, runId, continueOnError);
+							cleanupStep = {
+								mode: "delete_by_run",
+								deleted: cleanup.deletedCount,
+								failed: cleanup.failed.length,
+							};
+							if (cleanup.failed.length > 0) {
+								failed.push({
+									step: "scaffold",
+									error: `Pre-run cleanup failures: ${cleanup.failed.length}`,
+								});
+							}
+						} catch (error) {
+							const msg = error instanceof Error ? error.message : String(error);
+							if (!continueOnError) throw new Error(`Pre-run cleanup failed: ${msg}`);
+							failed.push({ step: "scaffold", error: `Pre-run cleanup: ${msg}` });
+						}
+					} else {
+						cleanupStep = { mode: "none", deleted: 0, failed: 0 };
+					}
+					try {
+					const header = await createBoardHeader(client, {
+						title,
+						runId,
+						origin,
+						headerMode,
+						themeColorMode,
+						themeCount: themes.length,
+						referenceCount: references.length,
+						noteCount: notes.length,
+					});
+					headerIds.boardHeaderNodeId = header.bg.id;
+					headerIds.boardHeaderTitleNodeId = header.title.id;
+					headerIds.boardHeaderMetaNodeId = header.stamp.id;
+				} catch (error) {
+					const msg = error instanceof Error ? error.message : String(error);
+					if (!continueOnError) throw new Error(`Board header failed: ${msg}`);
+					failed.push({ step: "scaffold", error: `Board header: ${msg}` });
+				}
+				if (scaffoldMode === "legacy") {
+					for (const s of baseSections) {
 					if (job?.cancelRequested) {
 						markPhase("cancelled");
 						return { cancelled: true };
 					}
-					try {
-						const section = await client.createSection({
-							name: s.name,
-							x: s.x,
-							y: s.y,
-							width: 1000,
-							height: 760,
-							metadata: { runId, itemKey: `section:${toSlug(s.key)}` },
-						});
-						(sectionIds as Record<string, string>)[s.key] = section.id;
-					} catch (error) {
+						try {
+							const sectionPalette = resolveThemePalette(s.key, themeColorMode);
+							const section = await client.createSection({
+								name: s.name,
+								x: s.x,
+								y: s.y,
+								width: 1000,
+								height: 760,
+								fillColor: sectionPalette.sectionBg,
+								strokeColor: sectionPalette.sectionStroke,
+								strokeWeight: 2,
+								metadata: { runId, itemKey: `section:${toSlug(s.key)}` },
+							});
+							(sectionIds as Record<string, string>)[s.key] = section.id;
+						} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (isSectionUnsupportedError(msg)) {
 							usedSectionFallbackContainer = true;
-							try {
-								const fallback = await client.createShape({
-									type: "rectangle",
-									text: s.name,
-									x: s.x,
-									y: s.y,
-									width: 1000,
-									height: 760,
-									role: "section_fallback",
-									metadata: { runId, itemKey: `section:${toSlug(s.key)}`, sectionFallback: true },
-								});
+								try {
+									const sectionPalette = resolveThemePalette(s.key, themeColorMode);
+									const fallback = await client.createShape({
+										type: "rectangle",
+										text: s.name,
+										x: s.x,
+										y: s.y,
+										width: 1000,
+										height: 760,
+										fillColor: sectionPalette.sectionBg,
+										strokeColor: sectionPalette.sectionStroke,
+										strokeWeight: 2,
+										role: "section_fallback",
+										metadata: { runId, itemKey: `section:${toSlug(s.key)}`, sectionFallback: true },
+									});
 								(sectionIds as Record<string, string>)[s.key] = fallback.id;
 							} catch (fallbackError) {
 								const fallbackMsg =
@@ -1202,24 +1816,36 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 							failed.push({ step: "scaffold", error: `Section ${s.key}: ${msg}` });
 						}
 					}
-					try {
-						await client.createText({
-							text: s.name,
-							x: s.x + 16,
-							y: s.y + 12,
-							fontSize: 24,
-							metadata: { runId, itemKey: `section-title:${toSlug(s.key)}` },
-						});
-					} catch (error) {
+						try {
+							const header = await createThemeHeaderBar(client, {
+								runId,
+								theme: s.name,
+								themeSlug: toSlug(s.key),
+								x: s.x + 8,
+								y: s.y + 8,
+								width: 984,
+								count: 0,
+								themeColorMode,
+							});
+							headerIds.themeHeaderNodeIds.push(header.bar.id);
+							await client.createText({
+								text: s.name,
+								x: s.x + 16,
+								y: s.y + 56,
+								fontSize: 20,
+								metadata: { runId, itemKey: `section-title:${toSlug(s.key)}` },
+							});
+						} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) throw new Error(`Scaffold title failed at ${s.key}: ${msg}`);
 						failed.push({ step: "scaffold", error: `Title ${s.key}: ${msg}` });
+					}
 					}
 				}
 
 				let ingestStep: { created: number; failed: number } | undefined;
 				let ingestCreatedNodes: Array<{ id: string; renderedText: string }> = [];
-				if (notes.length > 0) {
+				if (notes.length > 0 && notesMode === "sticky") {
 					markPhase("ingestResearchNotes");
 					if (checkCancelled()) return { cancelled: true };
 					try {
@@ -1228,10 +1854,10 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 							placement: {
 								mode: "column",
 								originX: origin.x + 40,
-								originY: origin.y + 96,
+								originY: origin.y + 96 + tokens.headerToFirstCardGap,
 								columns: 3,
 								gapX: 260,
-								gapY: 300,
+								gapY: tokens.rowGapY,
 							},
 							formatting: { includeMetadataPrefix: false, metadataOrder: ["type", "source", "confidence", "tags"] },
 							dedupe: { enabled: false, scope: "batch", caseSensitive: false },
@@ -1265,14 +1891,22 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					try {
 						const wall = await createReferenceWallInternal(
 							client,
-							{
-								title: `${title} References`,
-								references,
-								origin: { x: origin.x + 1220, y: origin.y + 30 },
-								layout: { mode: "columns_by_kind", columnGap: 560, rowGap: 360, sectionPadding: 56 },
-								continueOnError,
-							},
-							{ runId, dedupePolicy },
+								{
+									title: `${title} References`,
+									references,
+									origin: scaffoldMode === "legacy" ? { x: origin.x + 1220, y: origin.y + 30 } : { x: origin.x, y: origin.y + 30 },
+									layout: {
+										mode: referenceGrouping === "theme" ? "columns_by_theme" : "columns_by_kind",
+										columnGap: tokens.columnGapX,
+										rowGap: tokens.rowGapY,
+										sectionPadding: tokens.sectionPadding,
+									},
+									themeOrder: themes.map((t) => t.name),
+									uiPreset,
+									themeColorMode,
+									continueOnError,
+								},
+							{ runId, dedupePolicy, uiPreset, themeColorMode },
 						);
 						referenceStep = {
 							created: wall.summary.created,
@@ -1293,17 +1927,19 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 				}
 
 				let themeStep: { createdThemes: number; failed: number } | undefined;
+				let organizedThemes: Array<{ name: string; stickyIds: string[] }> = [];
 				if (themes.length > 0) {
 					markPhase("organizeByTheme");
 					if (checkCancelled()) return { cancelled: true };
 					try {
-						const themeRefs = themes.map((t) => {
-							const queries = t.noteQueries.map((q) => q.toLowerCase());
-							const noteRefs = ingestCreatedNodes
-								.filter((n) => queries.some((q) => n.renderedText.toLowerCase().includes(q)))
-								.map((n) => ({ nodeId: n.id }));
-							return { name: t.name, noteRefs };
-						});
+						const assignedByTheme = buildThemeMembership(
+							ingestCreatedNodes.map((n) => ({ id: n.id, renderedText: n.renderedText })),
+							themes,
+						);
+						const themeRefs = themes.map((t) => ({
+							name: t.name,
+							noteRefs: (assignedByTheme.get(t.name) || []).map((nodeId) => ({ nodeId })),
+						}));
 						const themed = await organizeByThemeInternal(client, {
 							themes: themeRefs.filter((t) => t.noteRefs.length > 0),
 							origin: { x: origin.x + 20, y: origin.y + 930 },
@@ -1312,6 +1948,7 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 							continueOnError,
 						});
 						themeStep = { createdThemes: themed.summary.createdThemes, failed: themed.summary.failed };
+						organizedThemes = themed.themes.map((t) => ({ name: t.name, stickyIds: t.stickyIds }));
 						if (themed.failed.length > 0) failed.push({ step: "organizeByTheme", error: `Partial theme failures: ${themed.failed.length}` });
 						if (job) job.progress.processedItems += themes.length;
 					} catch (error) {
@@ -1326,12 +1963,9 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					markPhase("linkByRelation");
 					if (checkCancelled()) return { cancelled: true };
 					try {
-						const relationLinks: z.infer<z.ZodObject<typeof linkByRelationInputSchema>>["links"] = [];
-						for (const t of themes) {
-							for (let i = 1; i < t.noteQueries.length; i += 1) {
-								relationLinks.push({ from: { query: t.noteQueries[i - 1] }, to: { query: t.noteQueries[i] }, relation: "related", label: undefined });
-							}
-						}
+						const textById = new Map(ingestCreatedNodes.map((n) => [n.id, n.renderedText]));
+						const relationLinks: z.infer<z.ZodObject<typeof linkByRelationInputSchema>>["links"] =
+							buildIntraThemeLinks(organizedThemes, textById);
 						if (relationLinks.length > 0) {
 							const linked = await linkByRelationInternal(client, { links: relationLinks, dedupeExisting: true, continueOnError });
 							linkStep = { created: linked.summary.created, failed: linked.summary.failed };
@@ -1353,13 +1987,18 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					mode: "safe_no_global_relayout",
 				};
 
-				let validationCandidates: string[] = [
-					sectionIds.intake,
-					sectionIds.references,
-					sectionIds.themes,
-					sectionIds.questions,
-					sectionIds.decisions,
-				].filter((id): id is string => typeof id === "string" && id.length > 0);
+					let validationCandidates: string[] = [
+						headerIds.boardHeaderNodeId,
+						headerIds.boardHeaderTitleNodeId,
+						headerIds.boardHeaderMetaNodeId,
+						sectionIds.intake,
+						sectionIds.references,
+						sectionIds.themes,
+						sectionIds.questions,
+						sectionIds.decisions,
+						...headerIds.themeHeaderNodeIds,
+						...organizedThemes.flatMap((theme) => theme.stickyIds),
+					].filter((id): id is string => typeof id === "string" && id.length > 0);
 				if (validationCandidates.length === 0) {
 					try {
 						validationCandidates = flattenNodes(await client.getBoardNodes())
@@ -1382,15 +2021,23 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					runId,
 					phase: "completed",
 					progress: { totalItems, processedItems: totalItems },
-					capabilities,
-					board: { title, sectionIds },
-					steps: {
+						capabilities,
+						board: { title, sectionIds, headerIds },
+						ui: {
+							preset: uiPreset,
+							headerMode,
+							themeColorMode,
+							paletteVersion: RESEARCH_UI_PALETTE_VERSION,
+						},
+						layoutTokens: tokens,
+						steps: {
 						ingestResearchNotes: ingestStep,
 						createReferenceWall: referenceStep,
-						organizeByTheme: themeStep,
-						autoLayoutBoard: layoutStep,
-						linkByRelation: linkStep,
-					},
+							organizeByTheme: themeStep,
+							autoLayoutBoard: layoutStep,
+							linkByRelation: linkStep,
+							preRunCleanup: cleanupStep,
+						},
 					failed,
 					summary: {
 						success: failed.length === 0,
@@ -1398,9 +2045,10 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 						usedSectionFallbackContainer,
 						nativeCount: referenceStep?.nativeCount || 0,
 						fallbackCount: referenceStep?.fallbackCount || 0,
-						overlapCount: referenceStep?.overlapCount || 0,
-						orphanNoteCount: referenceStep?.orphanNoteCount || 0,
-					},
+							overlapCount: referenceStep?.overlapCount || 0,
+							orphanNoteCount: referenceStep?.orphanNoteCount || 0,
+							headersCreated: Boolean(headerIds.boardHeaderNodeId),
+						},
 					telemetry: {
 						startedAt: job?.startedAt || nowIso(),
 						endedAt: nowIso(),
@@ -1436,14 +2084,20 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 				queueMicrotask(() => {
 					void job.runner?.();
 				});
-				return ok({
-					jobId: job.jobId,
-					runId: job.runId,
-					phase: job.phase,
-					status: job.status,
-					progress: job.progress,
-				});
-			}
+					return ok({
+						jobId: job.jobId,
+						runId: job.runId,
+						phase: job.phase,
+						status: job.status,
+						progress: job.progress,
+						ui: {
+							preset: input.uiPreset,
+							headerMode: input.headerMode,
+							themeColorMode: input.themeColorMode,
+							paletteVersion: RESEARCH_UI_PALETTE_VERSION,
+						},
+					});
+				}
 
 			try {
 				const syncResult = await executeFlow();

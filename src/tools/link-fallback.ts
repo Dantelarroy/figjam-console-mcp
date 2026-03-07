@@ -3,6 +3,7 @@ import { extname } from "node:path";
 import type { Browser, LaunchOptions } from "puppeteer-core";
 import type { FigJamNodeSummary } from "../figjam-api/figjamClient.js";
 import type { GetFigJamClient } from "../server/figjam-tooling.js";
+import { fallbackCardDimensions, type UiPreset } from "./research-ui.js";
 
 const MIME_BY_EXT: Record<string, string> = {
 	".png": "image/png",
@@ -101,6 +102,7 @@ export async function createLinkWithImageFallback(
 		title?: string;
 		x: number;
 		y: number;
+		uiPreset?: UiPreset;
 		alias?: string;
 		groupId?: string;
 		containerId?: string;
@@ -150,11 +152,14 @@ export async function createLinkWithImageFallback(
 		try {
 			const filePath = await captureWebImageToFile(input.url);
 			const { imageBytes, mimeType } = await readLocalImage(filePath);
+			const size = fallbackCardDimensions(input.uiPreset || "dense");
 			const card = await client.createFallbackLinkCard({
 				url: input.url,
 				title: displayTitle,
 				x: input.x,
 				y: input.y,
+				cardWidth: size.width,
+				cardHeight: size.height,
 				imageBytes,
 				mimeType,
 				alias: input.alias,

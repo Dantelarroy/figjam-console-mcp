@@ -12,6 +12,28 @@ This repository is focused on:
 - workflow and research-board operations on top of board primitives,
 - spec-driven delivery with contract and smoke validation.
 
+## Product Purpose (Source of Truth)
+
+This MCP is a **visual state layer** for an AI agent working with FigJam.
+
+- The agent does research, analysis, web browsing, screenshot capture, and strategy.
+- This MCP renders that output into FigJam, reads structured board state, and organizes it deterministically.
+
+In short:
+- agent decides,
+- MCP render/read/organize,
+- FigJam stores live visual state.
+
+### What the MCP does not do
+
+By design, this MCP does **not**:
+- perform web research on its own,
+- scrape or summarize external sources on its own,
+- do semantic clustering autonomously,
+- decide creative/research strategy autonomously.
+
+Those responsibilities stay in the agent layer. This MCP only executes deterministic board operations.
+
 ## Key Capabilities
 
 ### Infrastructure
@@ -50,6 +72,23 @@ This repository is focused on:
 - `figjam_index_board`
 - `getBoardIndex`
 - `figjam_upsert_artifact`
+- `figjam_organize_by_alias`
+- `figjam_validate_board_index`
+
+### Visual state tools
+- `figjam_render_reference_card`
+- `figjam_render_reference_set`
+- `figjam_read_board_state`
+- `figjam_get_artifact_collection`
+- `figjam_relocate_artifacts`
+- `figjam_delete_artifacts`
+- `figjam_bulk_upsert_artifacts`
+- `figjam_get_board_graph`
+- `figjam_move_collection`
+- `figjam_archive_collection`
+- `figjam_apply_layout_to_collection`
+- `figjam_export_board_snapshot`
+- `figjam_import_reference_bundle`
 
 ## Tool Catalog (What Each Tool Does)
 
@@ -69,7 +108,7 @@ This repository is focused on:
 | `updateSticky` | Updates sticky content and/or geometry by `nodeId`. |
 | `deleteSticky` | Deletes a sticky by `nodeId`. |
 | `createShape` | Creates `rectangle`, `circle`, or `diamond` (optional text). |
-| `createLink` | Creates a native `LINK_UNFURL` card from a URL. This tool is strict: it returns an error when the runtime or URL metadata cannot produce a rich card preview. |
+| `createLink` | Creates a native `LINK_UNFURL` card when rich metadata is available; otherwise falls back deterministically to a grouped reference card (clickable native link title + screenshot preview). |
 | `captureWebImage` | Captures a deterministic web screenshot to local disk (`selector`, ordered `selectors`, or explicit clip). |
 | `insertLocalImage` | Inserts a local image file (`png/jpg/jpeg/webp`) into FigJam as deterministic artifact with optional alias/metadata. |
 | `createImageReference` | Creates a structured image-reference artifact (image + deterministic metadata/alias for retrieval workflows). |
@@ -107,6 +146,26 @@ This repository is focused on:
 | `figjam_index_board` | Builds a deterministic board index snapshot (artifacts/containers/connectors, aliases, collisions, metadata). |
 | `getBoardIndex` | Returns cached index when available (`refresh=false`) or rebuilds fresh (`refresh=true`). |
 | `figjam_upsert_artifact` | Deterministic create/update by `nodeId` or alias with explicit precedence (`target` > `create`) and structured errors. |
+| `figjam_organize_by_alias` | Moves artifacts by alias using deterministic layout (`grid`/`column`) and optional metadata updates (`groupId`/`containerId`). |
+| `figjam_validate_board_index` | Validates index integrity (required aliases, collisions, connector endpoints) and returns deterministic visual validation targets. |
+
+### Visual state tools (render/read/organize/serialize)
+
+| Tool | What it does |
+|---|---|
+| `figjam_render_reference_card` | Renders one deterministic reference artifact (native link card, fallback link+image, or fallback sticky) plus optional note and connector. |
+| `figjam_render_reference_set` | Batch-renders reference cards with deterministic placement (`grid`/`column`) and partial failure reporting. |
+| `figjam_read_board_state` | Returns structured board-state payload with deterministic ordering and optional grouping. |
+| `figjam_get_artifact_collection` | Retrieves collections via explicit selectors (`alias`, `nodeId`, `groupId`, `containerId`, `role`, `type`). |
+| `figjam_relocate_artifacts` | Repositions selected artifacts deterministically (`grid` or `offset`), with optional metadata reassignment. |
+| `figjam_delete_artifacts` | Deletes selected artifacts deterministically with dry-run and partial-failure controls. |
+| `figjam_bulk_upsert_artifacts` | Bulk create/update pipeline with explicit precedence (`target` first, then `create`) and deterministic result envelope. |
+| `figjam_get_board_graph` | Exports deterministic graph view (nodes + connector/containment edges). |
+| `figjam_move_collection` | Moves selected collections with absolute/offset strategies and optional target group/container assignment. |
+| `figjam_archive_collection` | Archives selected collections by deterministic metadata mutation (`groupId`, `role`, archive flags). |
+| `figjam_apply_layout_to_collection` | Applies deterministic layout rules to a selected collection. |
+| `figjam_export_board_snapshot` | Exports versioned deterministic board snapshot for agent-side state reasoning and persistence. |
+| `figjam_import_reference_bundle` | Imports a deterministic reference bundle (optional heading + references) with layout and error controls. |
 
 ### Upstream compatibility surface (guarded)
 
@@ -271,6 +330,17 @@ Expected behavior:
 - created nodes appear in the board,
 - read tools return the created nodes.
 
+For full visual-state smoke coverage (new tools), run:
+
+1. `figjam_bulk_upsert_artifacts`
+2. `figjam_get_board_graph`
+3. `figjam_move_collection` (dryRun first)
+4. `figjam_apply_layout_to_collection` (dryRun first)
+5. `figjam_archive_collection` (dryRun first)
+6. `figjam_export_board_snapshot`
+7. `figjam_import_reference_bundle`
+8. `figjam_delete_artifacts` (dryRun first)
+
 ### 4.1 Web screenshot to FigJam image flow
 
 Use Playwright from the agent side to capture a local screenshot, then insert it with MCP:
@@ -283,10 +353,12 @@ This keeps MCP deterministic: browser automation stays in the agent, board rende
 
 ## Recent Updates
 
-- Added strict `createLink` tool for native FigJam link cards (`LINK_UNFURL` only).
+- Added robust `createLink` fallback path: if rich unfurl metadata is missing, render a clickable native text link plus deterministic web screenshot preview.
 - Added deterministic error contract for non-rich link previews (no silent fallback to sticky/text).
 - Fixed bridge reconnection flapping in both bridge UIs (`figjam-desktop-bridge` and `figma-desktop-bridge`) by removing only the closed socket instance instead of all sockets for a port.
 - Live smoke validated insertion of 10 link cards in a connected board.
+- Added visual-state layer tools (render/read/organize/serialize), bringing FigJam tool surface to 42 registered tools.
+- Connected smoke validated visual-state tools with deterministic fallback when native link previews lack rich metadata.
 
 ### 5. Use higher-level deterministic workflows
 
@@ -330,6 +402,18 @@ https://www.notion.so/31b2c91486408127a4f6cb425e1a3f2c
   - Bridge connection model stabilized (`GET_FILE_INFO`, active file resolution)
   - Capability guard implemented (`editorType`) with standardized `CAPABILITY_NOT_SUPPORTED`
   - Guard coverage tests and policy audit added
+- `Epic: DBI v1 Implementation` (P0/P1)
+  - `DBI v1 Phase 1` completed:
+    - `figjam_index_board`, `getBoardIndex`, deterministic index schema/cache
+    - pluginData metadata model and deterministic ordering contracts
+  - `DBI v1 Phase 2` completed:
+    - `figjam_upsert_artifact`
+    - alias-based target resolution + collision handling
+    - metadata-aware primitive writes
+  - `DBI v1 Phase 3 foundations` completed:
+    - `figjam_organize_by_alias`
+    - `figjam_validate_board_index`
+    - contract coverage for organization/validation path
 - `Epic: Workflow Tools v1` (P1)
   - `bulkCreateStickies`, `findNodes`, `createCluster`, `summarizeBoard`, `autoLayoutBoard`
 - `Epic: Research Workspace Tools v1` (P1)
@@ -339,29 +423,30 @@ https://www.notion.so/31b2c91486408127a4f6cb425e1a3f2c
 
 ### In Progress
 
-- `Epic: DBI v1 Implementation` (P0)
-  - `DBI v1 Phase 1 — Indexing and Metadata`
-  - Active subtasks include:
-    - pluginData metadata helpers
-    - `figjam_index_board` and `getBoardIndex`
-    - deterministic cache and ordering guarantees
+- `Epic: Visual State Layer (Render + Read + Organize + Serialize)` (P0)
+  - Shift from “tool collection” to deterministic board-state product model
+  - Active focus:
+    - richer artifact render contracts (links/images/notes/tags with metadata)
+    - deterministic board serialization for agent reasoning loops
+    - DBI-first organization as default path
 
 ### Next
 
-- `DBI v1 Phase 2 — Upsert and Alias Resolution` (P0/P1)
-  - Implement `figjam_upsert_artifact` with deterministic target/create/patch precedence
-  - Add alias collision handling and stable alias resolution helpers
-  - Integrate DBI metadata writes into node creation paths
+- `DBI v1 Phase 3 — hardening` (P1)
+  - integrate DBI organization tools with existing workflow/research tools
+  - add connected smoke suites for alias organization and validation loops
+  - add deterministic move/validation snapshots in CI artifacts
 - `Epic: Reliability and Observability` (P1)
   - production smoke matrix + automation harness
   - pass/fail reporting with raw MCP payload references
 
 ### Backlog
 
-- `DBI v1 Phase 3 — Organization + Validation` (P1)
-  - move organization flows to DBI source-of-truth resolution
-  - alias-first relation/organization paths
-  - screenshot checks as complementary visual QA (not source-of-truth)
+- `Task: Deterministic Board Serialization API` (P0)
+  - stable export shape for artifacts/containers/connectors/relations/metadata
+  - explicit schema versioning for agent-side consumers
+- `Task: Rich Render Layer for references` (P0)
+  - deterministic creation/update of link/image/reference cards with explicit metadata fields
 - `Epic: Screenshot Validation Layer` (P2)
   - optional visual verification artifacts after deterministic board mutations
 - `Epic: Repo Cleanup and Productization` (P2)
@@ -376,7 +461,7 @@ https://www.notion.so/31b2c91486408127a4f6cb425e1a3f2c
 
 1. Phase 1: deterministic board index + metadata schema + cache + contract tests.
 2. Phase 2: upsert + alias resolution + metadata writes on creation paths.
-3. Phase 3: DBI-driven organization tools + screenshot validation as secondary safety layer.
+3. Phase 3: DBI-driven organization/validation integration across workflow and research layers.
 
 ## License
 

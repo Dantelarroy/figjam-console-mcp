@@ -8,11 +8,11 @@ This document maps the requirements in `research-board-v2-spec.md` to the curren
 |---|---|---|---|
 | R1 Job-based execution | Implemented | `generateResearchBoard` supports job mode and returns `jobId/runId/phase/progress`; tools `figjam_get_job_status`, `figjam_cancel_job`, `figjam_resume_job` | `src/tools/research-workspace.ts` |
 | R2 Idempotency + dedupe | Implemented | `runId/itemKey` metadata on workflow artifacts; dedupe policies `by_url/by_title/strict`; upsert behavior by `runId+itemKey` | `src/tools/research-workspace.ts`, `src/tools/visual-state.ts`, `src/figjam-api/figjamClient.ts` |
-| R3 Safe deterministic layout | Implemented | Footprint estimation + `layoutPolicy` (`auto_expand/strict`) + `LAYOUT_GAP_TOO_SMALL`; applied gaps returned | `src/tools/visual-state.ts` |
+| R3 Safe deterministic layout | Implemented | Footprint estimation + `layoutPolicy` (`auto_expand/strict`) + `LAYOUT_GAP_TOO_SMALL`; centralized layout computation module + measured column reflow by actual card heights | `src/tools/visual-state.ts`, `src/tools/research-layout-engine.ts` |
 | R4 Section capability compatibility | Implemented | Runtime capabilities exposed (`supportsSections`, `supportsRichUnfurl`, `supportsImageInsert`); section fallback shape containers used and reported | `src/figjam-api/figjamClient.ts`, `src/figjam-local.ts`, `src/tools/research-workspace.ts` |
 | R5 Link policy contract | Implemented (with legacy compatibility) | New policy values (`native_preferred`, `native_only`, `fallback_if_unfurl_fails`, `fallback_force_card`) plus legacy aliases; per-item `mode/fallbackReason` | `src/tools/visual-state.ts`, `src/tools/link-fallback.ts`, `src/tools/links.ts` |
 | R6 Validation contract | Implemented | Batch/run metrics include `created/failed/native/fallback/overlap/orphan`; render validation screenshot attached | `src/tools/visual-state.ts`, `src/tools/research-workspace.ts` |
-| R7 Cleanup/rollback safety | Implemented | `figjam_delete_by_bbox`, `figjam_archive_by_bbox`, `figjam_delete_by_run`; all support `dryRun` | `src/tools/visual-state.ts` |
+| R7 Cleanup/rollback safety | Implemented | `figjam_delete_by_bbox`, `figjam_archive_by_bbox`, `figjam_delete_by_run`; all support `dryRun`. `generateResearchBoard` adds `preRunCleanup=delete_by_run` for scoped preflight cleanup | `src/tools/visual-state.ts`, `src/tools/research-workspace.ts` |
 
 ## API Contract Mapping
 

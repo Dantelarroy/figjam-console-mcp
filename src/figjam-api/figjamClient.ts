@@ -60,6 +60,11 @@ export interface CreateShapeInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	fillColor?: { r: number; g: number; b: number; a?: number };
+	strokeColor?: { r: number; g: number; b: number; a?: number };
+	strokeWeight?: number;
+	opacity?: number;
+	fontSize?: number;
 	alias?: string;
 	containerId?: string;
 	groupId?: string;
@@ -136,6 +141,10 @@ export interface CreateSectionInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	fillColor?: { r: number; g: number; b: number; a?: number };
+	strokeColor?: { r: number; g: number; b: number; a?: number };
+	strokeWeight?: number;
+	opacity?: number;
 	alias?: string;
 	containerId?: string;
 	groupId?: string;
@@ -178,6 +187,11 @@ export interface UpdateNodeInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	fillColor?: { r: number; g: number; b: number; a?: number };
+	strokeColor?: { r: number; g: number; b: number; a?: number };
+	strokeWeight?: number;
+	opacity?: number;
+	fontSize?: number;
 	alias?: string;
 	containerId?: string;
 	groupId?: string;
@@ -319,10 +333,25 @@ if (typeof input.text === "string") {
   await figma.loadFontAsync(shape.text.fontName);
   shape.text.characters = input.text;
 }
+if (typeof input.fontSize === "number" && shape.text) {
+  shape.text.fontSize = input.fontSize;
+}
 if (typeof input.x === "number") shape.x = input.x;
 if (typeof input.y === "number") shape.y = input.y;
 if (typeof input.width === "number" && typeof input.height === "number") {
   shape.resize(input.width, input.height);
+}
+if (input.fillColor && "fills" in shape) {
+  shape.fills = [{ type: "SOLID", color: { r: input.fillColor.r, g: input.fillColor.g, b: input.fillColor.b }, opacity: typeof input.fillColor.a === "number" ? input.fillColor.a : 1 }];
+}
+if (input.strokeColor && "strokes" in shape) {
+  shape.strokes = [{ type: "SOLID", color: { r: input.strokeColor.r, g: input.strokeColor.g, b: input.strokeColor.b }, opacity: typeof input.strokeColor.a === "number" ? input.strokeColor.a : 1 }];
+}
+if (typeof input.strokeWeight === "number" && "strokeWeight" in shape) {
+  shape.strokeWeight = input.strokeWeight;
+}
+if (typeof input.opacity === "number" && "opacity" in shape) {
+  shape.opacity = input.opacity;
 }
 figma.currentPage.appendChild(shape);
 if (typeof shape.setPluginData === "function") {
@@ -601,6 +630,18 @@ if (typeof input.y === "number") section.y = input.y;
 if (typeof input.width === "number" && typeof input.height === "number") {
   section.resize(input.width, input.height);
 }
+if (input.fillColor && "fills" in section) {
+  section.fills = [{ type: "SOLID", color: { r: input.fillColor.r, g: input.fillColor.g, b: input.fillColor.b }, opacity: typeof input.fillColor.a === "number" ? input.fillColor.a : 1 }];
+}
+if (input.strokeColor && "strokes" in section) {
+  section.strokes = [{ type: "SOLID", color: { r: input.strokeColor.r, g: input.strokeColor.g, b: input.strokeColor.b }, opacity: typeof input.strokeColor.a === "number" ? input.strokeColor.a : 1 }];
+}
+if (typeof input.strokeWeight === "number" && "strokeWeight" in section) {
+  section.strokeWeight = input.strokeWeight;
+}
+if (typeof input.opacity === "number" && "opacity" in section) {
+  section.opacity = input.opacity;
+}
 figma.currentPage.appendChild(section);
 if (typeof section.setPluginData === "function") {
   if (typeof input.role === "string" && input.role.trim().length > 0) section.setPluginData("figjam.role", input.role.trim());
@@ -859,6 +900,19 @@ if (typeof input.width === "number" && typeof input.height === "number" && typeo
   node.resize(input.width, input.height);
 }
 
+if (input.fillColor && "fills" in node) {
+  node.fills = [{ type: "SOLID", color: { r: input.fillColor.r, g: input.fillColor.g, b: input.fillColor.b }, opacity: typeof input.fillColor.a === "number" ? input.fillColor.a : 1 }];
+}
+if (input.strokeColor && "strokes" in node) {
+  node.strokes = [{ type: "SOLID", color: { r: input.strokeColor.r, g: input.strokeColor.g, b: input.strokeColor.b }, opacity: typeof input.strokeColor.a === "number" ? input.strokeColor.a : 1 }];
+}
+if (typeof input.strokeWeight === "number" && "strokeWeight" in node) {
+  node.strokeWeight = input.strokeWeight;
+}
+if (typeof input.opacity === "number" && "opacity" in node) {
+  node.opacity = input.opacity;
+}
+
 if (typeof input.text === "string") {
   if (node.type === "STICKY") {
     await figma.loadFontAsync(node.text.fontName);
@@ -866,9 +920,11 @@ if (typeof input.text === "string") {
   } else if (node.type === "TEXT") {
     await figma.loadFontAsync(node.fontName);
     node.characters = input.text;
+    if (typeof input.fontSize === "number") node.fontSize = input.fontSize;
   } else if (node.type === "SHAPE_WITH_TEXT") {
     await figma.loadFontAsync(node.text.fontName);
     node.text.characters = input.text;
+    if (typeof input.fontSize === "number") node.text.fontSize = input.fontSize;
   } else {
     throw new Error("Node type does not support text update: " + node.type);
   }

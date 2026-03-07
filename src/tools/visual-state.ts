@@ -4,6 +4,12 @@ import type { FigJamNodeSummary } from "../figjam-api/figjamClient.js";
 import type { GetFigJamClient } from "../server/figjam-tooling.js";
 import { fail, ok } from "../server/figjam-tooling.js";
 import { createLinkWithImageFallback } from "./link-fallback.js";
+import {
+	computeMeasuredColumnReflow,
+	computeOverlapCount,
+	computePlannedSlots,
+} from "./research-layout-engine.js";
+import { fallbackCardDimensions, resolveLayoutTokens, type UiPreset } from "./research-ui.js";
 
 type FlatNode = FigJamNodeSummary & {
 	alias?: string;
@@ -80,24 +86,21 @@ function toLinkPolicyMode(policy: LinkPolicy): "native_only" | "fallback_sticky"
 	return "fallback_link_image";
 }
 
-function estimateCardFootprint(input: { hasUrl: boolean; hasNote: boolean; linkPolicy: LinkPolicy }) {
+function estimateCardFootprint(input: { hasUrl: boolean; hasNote: boolean; linkPolicy: LinkPolicy; uiPreset: UiPreset }) {
+	const denseTokens = resolveLayoutTokens(input.uiPreset);
+	const fallback = fallbackCardDimensions(input.uiPreset);
 	const base =
 		!input.hasUrl
-			? { width: 280, height: 240 }
+			? { width: input.uiPreset === "comfortable" ? 300 : 260, height: input.uiPreset === "comfortable" ? 220 : 200 }
 			: input.linkPolicy === "fallback_force_card" || input.linkPolicy === "fallback_link_image"
-				? { width: 430, height: 340 }
-				: { width: 400, height: 280 };
+				? { width: fallback.width, height: fallback.height }
+				: input.uiPreset === "comfortable"
+					? { width: 400, height: 280 }
+					: { width: 360, height: 240 };
 	return {
 		width: base.width,
-		height: base.height + (input.hasNote ? 280 : 0),
+		height: base.height + (input.hasNote ? 200 + denseTokens.noteGap : 0),
 	};
-}
-
-function hasBboxOverlap(
-	a: { x: number; y: number; width: number; height: number },
-	b: { x: number; y: number; width: number; height: number },
-): boolean {
-	return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 function inBbox(node: Pick<FlatNode, "x" | "y" | "width" | "height">, bbox: { x: number; y: number; width: number; height: number }): boolean {
@@ -123,6 +126,7 @@ const renderReferenceCardInputSchema = {
 	containerId: z.string().min(1).max(120).optional(),
 	runId: z.string().min(1).max(120).optional(),
 	itemKey: z.string().min(1).max(240).optional(),
+	uiPreset: z.enum(["dense", "comfortable"]).default("dense"),
 	linkPolicy: z.enum(LINK_POLICY_VALUES).default("native_preferred"),
 	connectNoteToPrimary: z.boolean().default(true),
 };
@@ -154,6 +158,7 @@ const renderReferenceSetInputSchema = {
 		})
 		.default({}),
 	layoutPolicy: z.enum(["auto_expand", "strict"]).default("auto_expand"),
+	uiPreset: z.enum(["dense", "comfortable"]).default("dense"),
 	maxItemsPerBatch: z.number().int().min(1).max(100).default(20),
 	linkPolicy: z.enum(LINK_POLICY_VALUES).default("fallback_if_unfurl_fails"),
 	continueOnError: z.boolean().default(true),
@@ -280,6 +285,11 @@ const bulkUpsertArtifactsInputSchema = {
 						y: z.number().optional(),
 						width: z.number().optional(),
 						height: z.number().optional(),
+						fillColor: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }).optional(),
+						strokeColor: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }).optional(),
+						strokeWeight: z.number().optional(),
+						opacity: z.number().optional(),
+						fontSize: z.number().optional(),
 					})
 					.optional(),
 				patch: z
@@ -290,6 +300,11 @@ const bulkUpsertArtifactsInputSchema = {
 						y: z.number().optional(),
 						width: z.number().optional(),
 						height: z.number().optional(),
+						fillColor: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }).optional(),
+						strokeColor: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }).optional(),
+						strokeWeight: z.number().optional(),
+						opacity: z.number().optional(),
+						fontSize: z.number().optional(),
 					})
 					.optional(),
 				alias: z.string().min(1).max(120).optional(),
@@ -427,6 +442,7 @@ const importReferenceBundleInputSchema = {
 			gapY: z.number().min(0).default(360),
 		})
 		.default({}),
+	uiPreset: z.enum(["dense", "comfortable"]).default("dense"),
 	linkPolicy: z.enum(LINK_POLICY_VALUES).default("fallback_if_unfurl_fails"),
 	continueOnError: z.boolean().default(true),
 };
@@ -503,30 +519,60 @@ function resolveNodeByTarget(nodes: FlatNode[], target?: { nodeId?: string; alia
 }
 
 async function captureRenderValidation(client: Awaited<ReturnType<GetFigJamClient>>, candidateNodeIds: Array<string | null | undefined>) {
-	const nodeId = candidateNodeIds.find((id) => typeof id === "string" && id.length > 0) || null;
-	if (!nodeId) {
-		return {
-			attempted: false,
-			ok: false,
-			nodeId: null,
-			error: "NO_NODE_FOR_VALIDATION",
-		};
-	}
+	const targetNodeIds = [...new Set(candidateNodeIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+	if (targetNodeIds.length === 0) return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION", targetNodeIds: [], regionBounds: null, nodeCountInRegion: 0 };
+
+	let regionBounds: { x: number; y: number; width: number; height: number } | null = null;
+	let chosenNodeId: string | null = targetNodeIds[0];
+	let nodeCountInRegion = 0;
 	try {
-		const shot = await client.captureNodeScreenshot(nodeId, 2);
+		const scan = await client.scanBoardState();
+		const flat = flattenNodes(scan.nodes);
+		const selected = flat.filter((n) => targetNodeIds.includes(n.id) && typeof n.x === "number" && typeof n.y === "number");
+		if (selected.length > 0) {
+			const minX = Math.min(...selected.map((n) => n.x || 0));
+			const minY = Math.min(...selected.map((n) => n.y || 0));
+			const maxX = Math.max(...selected.map((n) => (n.x || 0) + (n.width || 0)));
+			const maxY = Math.max(...selected.map((n) => (n.y || 0) + (n.height || 0)));
+			regionBounds = { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+			nodeCountInRegion = flat.filter((n) => inBbox(n, regionBounds!)).length;
+			const containerCandidate = selected.find(
+				(n) =>
+					typeof n.width === "number" &&
+					typeof n.height === "number" &&
+					n.x === regionBounds!.x &&
+					n.y === regionBounds!.y &&
+					n.width >= regionBounds!.width &&
+					n.height >= regionBounds!.height,
+			);
+			if (containerCandidate?.id) chosenNodeId = containerCandidate.id;
+		}
+	} catch {
+		// Keep best-effort validation.
+	}
+
+	if (!chosenNodeId) return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION", targetNodeIds, regionBounds, nodeCountInRegion };
+	try {
+		const shot = await client.captureNodeScreenshot(chosenNodeId, 2);
 		return {
 			attempted: true,
 			ok: true,
-			nodeId,
+			nodeId: chosenNodeId,
 			byteLength: shot.byteLength,
 			bounds: shot.bounds,
+			targetNodeIds,
+			regionBounds,
+			nodeCountInRegion,
 		};
 	} catch (error) {
 		return {
 			attempted: true,
 			ok: false,
-			nodeId,
+			nodeId: chosenNodeId,
 			error: error instanceof Error ? error.message : String(error),
+			targetNodeIds,
+			regionBounds,
+			nodeCountInRegion,
 		};
 	}
 }
@@ -542,11 +588,12 @@ async function renderSingleReferenceCard(
 		alias?: string;
 		groupId?: string;
 		containerId?: string;
-		runId?: string;
-		itemKey?: string;
-		linkPolicy: LinkPolicy;
-		connectNoteToPrimary: boolean;
-	},
+			runId?: string;
+			itemKey?: string;
+			uiPreset: UiPreset;
+			linkPolicy: LinkPolicy;
+			connectNoteToPrimary: boolean;
+		},
 ) {
 	const client = await getClient();
 	let primary: FigJamNodeSummary | null = null;
@@ -558,23 +605,24 @@ async function renderSingleReferenceCard(
 	let fallbackReason: string | undefined;
 
 	const metadata = {
-		runId: input.runId || null,
-		itemKey: input.itemKey || null,
+		runId: input.runId || "",
+		itemKey: input.itemKey || "",
 		title: input.title,
 	};
 	if (input.url) {
 		try {
 			const normalizedPolicy = toLinkPolicyMode(input.linkPolicy);
 			if (normalizedPolicy === "fallback_link_image") {
-				const rendered = await createLinkWithImageFallback(getClient, {
-					url: input.url,
-					title: input.title,
-					x: input.x,
-					y: input.y,
-					alias: input.alias,
-					groupId: input.groupId,
-					containerId: input.containerId,
-					role: "reference",
+					const rendered = await createLinkWithImageFallback(getClient, {
+						url: input.url,
+						title: input.title,
+						x: input.x,
+						y: input.y,
+						uiPreset: input.uiPreset,
+						alias: input.alias,
+						groupId: input.groupId,
+						containerId: input.containerId,
+						role: "reference",
 					preferNative: input.linkPolicy !== "fallback_force_card",
 				});
 				primary = rendered.primary;
@@ -628,10 +676,12 @@ async function renderSingleReferenceCard(
 	}
 
 	if (input.note && input.note.trim().length > 0) {
+		const noteGap = resolveLayoutTokens(input.uiPreset).noteGap;
+		const noteY = input.y + Math.max(180, primary?.height || 0) + noteGap;
 		noteNode = await client.createSticky({
 			text: input.note.trim(),
 			x: input.x,
-			y: input.y + 260,
+			y: noteY,
 			alias: input.alias ? `${input.alias}__note` : undefined,
 			groupId: input.groupId,
 			containerId: input.containerId,
@@ -681,9 +731,10 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 					created.note?.id,
 				]);
 				return ok({
-					reference: {
-						mode: created.mode,
-						runId,
+						reference: {
+							mode: created.mode,
+							uiPreset: input.uiPreset,
+							runId,
 						itemKey,
 						capabilities,
 						alias: input.alias || null,
@@ -715,7 +766,7 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 		"figjam_render_reference_set",
 		"Render a deterministic set of reference cards with grid/column placement.",
 		renderReferenceSetInputSchema,
-		async ({ items, runId, dedupePolicy, layout, layoutPolicy, maxItemsPerBatch, linkPolicy, continueOnError }) => {
+		async ({ items, runId, dedupePolicy, layout, layoutPolicy, uiPreset, maxItemsPerBatch, linkPolicy, continueOnError }) => {
 			try {
 				const client = await getClient();
 				const capabilities = await client.getRuntimeCapabilities().catch(() => ({
@@ -732,15 +783,17 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 						hasUrl: Boolean(item.url),
 						hasNote: Boolean(item.note && item.note.trim().length > 0),
 						linkPolicy,
+						uiPreset,
 					}),
 				);
-				const footprintMaxWidth = footprintByItem.reduce((max, item) => Math.max(max, item.width), 0);
-				const footprintMaxHeight = footprintByItem.reduce((max, item) => Math.max(max, item.height), 0);
-				let appliedGapX = layout.gapX;
-				let appliedGapY = layout.gapY;
-				if (layout.mode === "grid") {
-					if (layoutPolicy === "strict" && (layout.gapX < footprintMaxWidth || layout.gapY < footprintMaxHeight)) {
-						return {
+					const footprintMaxWidth = footprintByItem.reduce((max, item) => Math.max(max, item.width), 0);
+					const footprintMaxHeight = footprintByItem.reduce((max, item) => Math.max(max, item.height), 0);
+					const layoutTokens = resolveLayoutTokens(uiPreset);
+					let appliedGapX = layout.gapX;
+					let appliedGapY = layout.gapY;
+					if (layout.mode === "grid") {
+						if (layoutPolicy === "strict" && (layout.gapX < footprintMaxWidth || layout.gapY < footprintMaxHeight)) {
+							return {
 							isError: true,
 							content: [
 								{
@@ -761,10 +814,36 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 								},
 							],
 						};
+						}
+						appliedGapX = Math.max(layout.gapX, footprintMaxWidth);
+						appliedGapY = Math.max(layout.gapY, footprintMaxHeight);
+					} else {
+						const minColumnGapY = Math.max(20, Math.floor(layoutTokens.noteGap * 1.2));
+						const columnCount = Math.max(1, layout.columns || 1);
+						if (layoutPolicy === "strict" && columnCount > 1 && layout.gapX < footprintMaxWidth) {
+							return {
+								isError: true,
+								content: [
+									{
+										type: "text" as const,
+										text: JSON.stringify({
+											error: {
+												code: "LAYOUT_GAP_TOO_SMALL",
+												tool: "figjam_render_reference_set",
+												message: "Requested column gap is smaller than required card footprint",
+												details: {
+													requestedGapX: layout.gapX,
+													footprintMaxWidth,
+												},
+											},
+										}),
+									},
+								],
+							};
+						}
+						appliedGapX = columnCount > 1 ? Math.max(layout.gapX, footprintMaxWidth) : layout.gapX;
+						appliedGapY = Math.max(layout.gapY, minColumnGapY);
 					}
-					appliedGapX = Math.max(layout.gapX, footprintMaxWidth);
-					appliedGapY = Math.max(layout.gapY, footprintMaxHeight);
-				}
 
 				const scan = await client.scanBoardState();
 				const existing = flattenNodes(scan.nodes);
@@ -774,30 +853,50 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 					byRunAndItemKey.set(`${node.runId}::${node.itemKey}`, node);
 				}
 
-				const totalItems = items.length;
-				const overlapBboxes: Array<{ x: number; y: number; width: number; height: number }> = [];
-				let overlapCount = 0;
-				let nativeCount = 0;
-				let fallbackCount = 0;
-				let orphanNoteCount = 0;
+					const totalItems = items.length;
+					let overlapCount = 0;
+					let nativeCount = 0;
+					let fallbackCount = 0;
+					let orphanNoteCount = 0;
+					const measuredHeights: number[] = [];
 
-				for (let i = 0; i < items.length; i += 1) {
-					const item = items[i];
-					const itemKey = itemKeyFromItem(item, dedupePolicy);
-					const uniqueKey = `${resolvedRunId}::${itemKey}`;
-					const metadata = { runId: resolvedRunId, itemKey, batchSize: totalItems };
-					const footprint = footprintByItem[i];
-					const x =
-						layout.mode === "grid"
-							? layout.originX + (i % layout.columns) * appliedGapX
-							: layout.originX;
-					const y =
-						layout.mode === "grid"
-							? layout.originY + Math.floor(i / layout.columns) * appliedGapY
-							: layout.originY + i * appliedGapY;
-					try {
-						const existingNode = byRunAndItemKey.get(uniqueKey);
-						if (existingNode) {
+					const plan = computePlannedSlots(
+						{
+							mode: layout.mode,
+							originX: layout.originX,
+							originY: layout.originY,
+							columns: layout.columns,
+							gapX: appliedGapX,
+							gapY: appliedGapY,
+						},
+						footprintByItem.map((v) => v.height),
+					);
+					const plannedPositions = plan.slots;
+
+					const renderedPlacements: Array<{
+						index: number;
+						column: number;
+						x: number;
+						y: number;
+						finalY: number;
+						width: number;
+						height: number;
+						primaryNodeId: string | null;
+						noteNodeId: string | null;
+					}> = [];
+
+					for (let i = 0; i < items.length; i += 1) {
+						const item = items[i];
+						const itemKey = itemKeyFromItem(item, dedupePolicy);
+						const uniqueKey = `${resolvedRunId}::${itemKey}`;
+						const metadata = { runId: resolvedRunId, itemKey, batchSize: totalItems };
+						const footprint = footprintByItem[i];
+						const placement = plannedPositions[i];
+						const x = placement.x;
+						const y = placement.y;
+						try {
+							const existingNode = byRunAndItemKey.get(uniqueKey);
+							if (existingNode) {
 							await client.moveNode({ nodeId: existingNode.id, x, y });
 							await client.updateNode({
 								nodeId: existingNode.id,
@@ -819,16 +918,36 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 								noteNodeId: null,
 								connectorNodeId: null,
 								itemKey,
-							});
-							createdNodeIds.push(existingNode.id);
-							overlapBboxes.push({ x, y, width: footprint.width, height: footprint.height });
-							continue;
-						}
+								});
+								createdNodeIds.push(existingNode.id);
+								const measuredHeight =
+									typeof existingNode.height === "number" && existingNode.height > 0
+										? existingNode.height
+										: footprint.height;
+								const measuredWidth =
+									typeof existingNode.width === "number" && existingNode.width > 0
+										? existingNode.width
+										: footprint.width;
+								measuredHeights.push(measuredHeight);
+								renderedPlacements.push({
+									index: i,
+									column: placement.column,
+									x,
+									y,
+									finalY: y,
+									width: measuredWidth,
+									height: measuredHeight,
+									primaryNodeId: existingNode.id,
+									noteNodeId: null,
+								});
+								continue;
+							}
 
 						const rendered = await renderSingleReferenceCard(getClient, {
 							...item,
 							x,
 							y,
+							uiPreset,
 							linkPolicy,
 							connectNoteToPrimary: true,
 							runId: resolvedRunId,
@@ -846,15 +965,32 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 							connectorNodeId: rendered.connector?.id || null,
 							itemKey,
 							fallbackReason: rendered.fallbackReason || null,
-						});
-						if (rendered.primary?.id) createdNodeIds.push(rendered.primary.id);
-						if (rendered.mode === "native_link") nativeCount += 1;
-						if (rendered.mode === "fallback_link_image" || rendered.mode === "fallback_sticky") fallbackCount += 1;
-						if (item.note && !rendered.note) orphanNoteCount += 1;
-						const currentBbox = { x, y, width: footprint.width, height: footprint.height };
-						if (overlapBboxes.some((box) => hasBboxOverlap(box, currentBbox))) overlapCount += 1;
-						overlapBboxes.push(currentBbox);
-					} catch (error) {
+							});
+							if (rendered.primary?.id) createdNodeIds.push(rendered.primary.id);
+							const measuredHeight =
+								typeof rendered.primary?.height === "number" && rendered.primary.height > 0
+									? rendered.primary.height
+									: footprint.height;
+							const measuredWidth =
+								typeof rendered.primary?.width === "number" && rendered.primary.width > 0
+									? rendered.primary.width
+									: footprint.width;
+							measuredHeights.push(measuredHeight);
+							if (rendered.mode === "native_link") nativeCount += 1;
+							if (rendered.mode === "fallback_link_image" || rendered.mode === "fallback_sticky") fallbackCount += 1;
+							if (item.note && !rendered.note) orphanNoteCount += 1;
+							renderedPlacements.push({
+								index: i,
+								column: placement.column,
+								x,
+								y,
+								finalY: y,
+								width: measuredWidth,
+								height: measuredHeight,
+								primaryNodeId: rendered.primary?.id || null,
+								noteNodeId: rendered.note?.id || null,
+							});
+						} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) {
 							return {
@@ -876,15 +1012,64 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 						}
 						failed.push({ index: i, title: item.title, error: message });
 					}
-					if ((i + 1) % maxItemsPerBatch === 0) {
-						// Yield opportunity between deterministic chunks for large runs.
-						await new Promise((resolve) => setTimeout(resolve, 0));
+						if ((i + 1) % maxItemsPerBatch === 0) {
+							// Yield opportunity between deterministic chunks for large runs.
+							await new Promise((resolve) => setTimeout(resolve, 0));
+						}
 					}
-				}
 
-				return ok({
+					if (layout.mode === "column") {
+						const reflow = computeMeasuredColumnReflow(
+							{
+								mode: layout.mode,
+								originX: layout.originX,
+								originY: layout.originY,
+								columns: layout.columns,
+								gapX: appliedGapX,
+								gapY: appliedGapY,
+							},
+							renderedPlacements.map((v) => ({
+								index: v.index,
+								column: v.column,
+								x: v.x,
+								y: v.y,
+								height: v.height,
+							})),
+						);
+						const byIndex = new Map<number, { x: number; y: number }>();
+						for (const item of reflow) byIndex.set(item.index, { x: item.x, y: item.y });
+
+						for (const placement of renderedPlacements.sort((a, b) => a.index - b.index)) {
+							const target = byIndex.get(placement.index);
+							const targetY = target ? target.y : placement.y;
+							if (Math.abs(targetY - placement.y) <= 0.5) {
+								placement.finalY = placement.y;
+								continue;
+							}
+							placement.finalY = targetY;
+							if (placement.primaryNodeId) {
+								await client.moveNode({ nodeId: placement.primaryNodeId, x: placement.x, y: targetY });
+							}
+							if (placement.noteNodeId) {
+								const noteY = targetY + Math.max(180, placement.height) + layoutTokens.noteGap;
+								await client.moveNode({ nodeId: placement.noteNodeId, x: placement.x, y: noteY });
+							}
+						}
+					}
+
+					overlapCount = computeOverlapCount(
+						renderedPlacements.map((placement) => ({
+							x: placement.x,
+							y: placement.finalY,
+							width: placement.width,
+							height: placement.height,
+						})),
+					);
+
+					return ok({
 					batch: {
 						runId: resolvedRunId,
+						uiPreset,
 						capabilities,
 						layoutMode: layout.mode,
 						layoutPolicy,
@@ -899,7 +1084,12 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 						appliedGapY,
 						footprintMaxWidth,
 						footprintMaxHeight,
-						created,
+							cardVariantCounts: {
+								urlBacked: items.filter((item) => Boolean(item.url)).length,
+								textOnly: items.filter((item) => !item.url).length,
+							},
+							measuredCardHeights: measuredHeights,
+							created,
 						failed,
 					},
 					renderValidation: await captureRenderValidation(client, createdNodeIds),
@@ -1204,17 +1394,22 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 
 						if (targetNode) {
 							const patch = item.patch || {};
-							await client.updateNode({
-								nodeId: targetNode.id,
-								title: patch.title,
-								text: patch.text,
-								x: patch.x,
-								y: patch.y,
-								width: patch.width,
-								height: patch.height,
-								alias: item.alias,
-								groupId: item.groupId,
-								containerId: item.containerId,
+								await client.updateNode({
+									nodeId: targetNode.id,
+									title: patch.title,
+									text: patch.text,
+									x: patch.x,
+									y: patch.y,
+									width: patch.width,
+									height: patch.height,
+									fillColor: (patch as any).fillColor,
+									strokeColor: (patch as any).strokeColor,
+									strokeWeight: (patch as any).strokeWeight,
+									opacity: (patch as any).opacity,
+									fontSize: (patch as any).fontSize,
+									alias: item.alias,
+									groupId: item.groupId,
+									containerId: item.containerId,
 								role: item.role,
 								sourceUrl: item.sourceUrl,
 								metadata: item.metadata,
@@ -1245,27 +1440,33 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 								metadata: item.metadata,
 							});
 						} else if (create.kind === "shape") {
-							createdNode = await client.createShape({
-								type: create.type || "rectangle",
-								text: create.text || create.title,
-								x: create.x,
-								y: create.y,
-								width: create.width,
-								height: create.height,
-								alias: item.alias,
-								groupId: item.groupId,
-								containerId: item.containerId,
+								createdNode = await client.createShape({
+									type: create.type || "rectangle",
+									text: create.text || create.title,
+									x: create.x,
+									y: create.y,
+									width: create.width,
+									height: create.height,
+									fillColor: create.fillColor,
+									strokeColor: create.strokeColor,
+									strokeWeight: create.strokeWeight,
+									opacity: create.opacity,
+									fontSize: create.fontSize,
+									alias: item.alias,
+									groupId: item.groupId,
+									containerId: item.containerId,
 								role: item.role,
 								sourceUrl: item.sourceUrl,
 								metadata: item.metadata,
 							});
 						} else if (create.kind === "text") {
-							createdNode = await client.createText({
-								text: create.text || create.title || "Untitled",
-								x: create.x,
-								y: create.y,
-								alias: item.alias,
-								groupId: item.groupId,
+								createdNode = await client.createText({
+									text: create.text || create.title || "Untitled",
+									x: create.x,
+									y: create.y,
+									fontSize: create.fontSize,
+									alias: item.alias,
+									groupId: item.groupId,
 								containerId: item.containerId,
 								role: item.role,
 								sourceUrl: item.sourceUrl,
@@ -1273,14 +1474,18 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 							});
 						} else if (create.kind === "section") {
 							try {
-								createdNode = await client.createSection({
-									name: create.title || "Section",
-									x: create.x,
-									y: create.y,
-									width: create.width,
-									height: create.height,
-									alias: item.alias,
-									groupId: item.groupId,
+									createdNode = await client.createSection({
+										name: create.title || "Section",
+										x: create.x,
+										y: create.y,
+										width: create.width,
+										height: create.height,
+										fillColor: create.fillColor,
+										strokeColor: create.strokeColor,
+										strokeWeight: create.strokeWeight,
+										opacity: create.opacity,
+										alias: item.alias,
+										groupId: item.groupId,
 									containerId: item.containerId,
 									role: item.role,
 									sourceUrl: item.sourceUrl,
@@ -1288,14 +1493,18 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 								});
 							} catch {
 								// Fallback for runtimes where section creation is not available.
-								createdNode = await client.createShape({
-									type: "rectangle",
-									text: create.title || "",
-									x: create.x,
-									y: create.y,
-									width: create.width || 1200,
-									height: create.height || 800,
-									alias: item.alias,
+									createdNode = await client.createShape({
+										type: "rectangle",
+										text: create.title || "",
+										x: create.x,
+										y: create.y,
+										width: create.width || 1200,
+										height: create.height || 800,
+										fillColor: create.fillColor,
+										strokeColor: create.strokeColor,
+										strokeWeight: create.strokeWeight,
+										opacity: create.opacity,
+										alias: item.alias,
 									groupId: item.groupId,
 									containerId: item.containerId,
 									role: item.role || "section_fallback",
@@ -1877,11 +2086,11 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 		},
 	);
 
-	server.tool(
-		"figjam_import_reference_bundle",
-		"Import deterministic reference bundle onto the board.",
-		importReferenceBundleInputSchema,
-		async ({ title, items, layout, linkPolicy, continueOnError }) => {
+		server.tool(
+			"figjam_import_reference_bundle",
+			"Import deterministic reference bundle onto the board.",
+			importReferenceBundleInputSchema,
+			async ({ title, items, layout, uiPreset, linkPolicy, continueOnError }) => {
 			try {
 				const client = await getClient();
 				let heading: FigJamNodeSummary | null = null;
@@ -1894,30 +2103,59 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 					});
 				}
 
-				const created: Array<Record<string, unknown>> = [];
-				const failed: Array<{ index: number; title: string; error: string }> = [];
-				const createdNodeIds: string[] = [];
-				for (let i = 0; i < items.length; i += 1) {
-					const item = items[i];
-					const x = layout.mode === "grid" ? layout.originX + (i % layout.columns) * layout.gapX : layout.originX;
-					const y =
-						layout.mode === "grid"
-							? layout.originY + Math.floor(i / layout.columns) * layout.gapY
-							: layout.originY + i * layout.gapY;
-					try {
-						const rendered = await renderSingleReferenceCard(getClient, {
-							title: item.title,
+					const created: Array<Record<string, unknown>> = [];
+					const failed: Array<{ index: number; title: string; error: string }> = [];
+					const createdNodeIds: string[] = [];
+					const layoutTokens = resolveLayoutTokens(uiPreset);
+					const footprintByItem = items.map((item) =>
+						estimateCardFootprint({
+							hasUrl: Boolean(item.url),
+							hasNote: Boolean(item.note && item.note.trim().length > 0),
+							linkPolicy,
+							uiPreset,
+						}),
+					);
+					const plan = computePlannedSlots(
+						{
+							mode: layout.mode,
+							originX: layout.originX,
+							originY: layout.originY,
+							columns: layout.columns,
+							gapX: layout.gapX,
+							gapY: layout.gapY,
+						},
+						footprintByItem.map((v) => v.height),
+					);
+					const renderedPlacements: Array<{
+						index: number;
+						column: number;
+						x: number;
+						y: number;
+						finalY: number;
+						height: number;
+						primaryNodeId: string | null;
+						noteNodeId: string | null;
+					}> = [];
+					for (let i = 0; i < items.length; i += 1) {
+						const item = items[i];
+						const placement = plan.slots[i];
+						const x = placement.x;
+						const y = placement.y;
+						try {
+							const rendered = await renderSingleReferenceCard(getClient, {
+								title: item.title,
 							url: item.url,
 							note: item.note,
 							alias: item.alias,
 							groupId: item.groupId,
 							containerId: item.containerId,
-							x,
-							y,
-							linkPolicy,
-							connectNoteToPrimary: true,
-						});
-						created.push({
+								x,
+								y,
+								uiPreset,
+								linkPolicy,
+								connectNoteToPrimary: true,
+							});
+							created.push({
 							index: i,
 							title: item.title,
 							alias: item.alias || null,
@@ -1925,9 +2163,22 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 							primaryNodeId: rendered.primary?.id || null,
 							noteNodeId: rendered.note?.id || null,
 							connectorNodeId: rendered.connector?.id || null,
-						});
-						if (rendered.primary?.id) createdNodeIds.push(rendered.primary.id);
-					} catch (error) {
+							});
+							if (rendered.primary?.id) createdNodeIds.push(rendered.primary.id);
+							renderedPlacements.push({
+								index: i,
+								column: placement.column,
+								x,
+								y,
+								finalY: y,
+								height:
+									typeof rendered.primary?.height === "number" && rendered.primary.height > 0
+										? rendered.primary.height
+										: footprintByItem[i].height,
+								primaryNodeId: rendered.primary?.id || null,
+								noteNodeId: rendered.note?.id || null,
+							});
+						} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) {
 							return {
@@ -1948,10 +2199,45 @@ export function registerVisualStateTools(server: McpServer, getClient: GetFigJam
 							};
 						}
 						failed.push({ index: i, title: item.title, error: message });
+						}
 					}
-				}
 
-				return ok({
+					if (layout.mode === "column") {
+						const reflow = computeMeasuredColumnReflow(
+							{
+								mode: layout.mode,
+								originX: layout.originX,
+								originY: layout.originY,
+								columns: layout.columns,
+								gapX: layout.gapX,
+								gapY: layout.gapY,
+							},
+							renderedPlacements.map((v) => ({
+								index: v.index,
+								column: v.column,
+								x: v.x,
+								y: v.y,
+								height: v.height,
+							})),
+						);
+						const byIndex = new Map<number, { x: number; y: number }>();
+						for (const item of reflow) byIndex.set(item.index, { x: item.x, y: item.y });
+						for (const placement of renderedPlacements.sort((a, b) => a.index - b.index)) {
+							const target = byIndex.get(placement.index);
+							const targetY = target ? target.y : placement.y;
+							if (Math.abs(targetY - placement.y) <= 0.5) continue;
+							placement.finalY = targetY;
+							if (placement.primaryNodeId) {
+								await client.moveNode({ nodeId: placement.primaryNodeId, x: placement.x, y: targetY });
+							}
+							if (placement.noteNodeId) {
+								const noteY = targetY + Math.max(180, placement.height) + layoutTokens.noteGap;
+								await client.moveNode({ nodeId: placement.noteNodeId, x: placement.x, y: noteY });
+							}
+						}
+					}
+
+					return ok({
 					bundle: {
 						title: title || null,
 						headingNodeId: heading?.id || null,
