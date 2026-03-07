@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { FigJamClient, FigJamNodeSummary } from "../figjam-api/figjamClient.js";
 import type { GetFigJamClient } from "../server/figjam-tooling.js";
 import { fail, ok } from "../server/figjam-tooling.js";
+import { createLinkWithImageFallback } from "./link-fallback.js";
 
 type FlatNode = FigJamNodeSummary & {
 	connectorStart?: { endpointNodeId?: string } | null;
@@ -76,8 +77,8 @@ const createReferenceWallInputSchema = {
 	layout: z
 		.object({
 			mode: z.enum(["columns_by_kind", "single_grid"]).default("columns_by_kind"),
-			columnGap: z.number().min(0).default(320),
-			rowGap: z.number().min(0).default(180),
+			columnGap: z.number().min(0).default(460),
+			rowGap: z.number().min(0).default(320),
 			sectionPadding: z.number().min(0).default(56),
 		})
 		.default({}),
@@ -155,6 +156,7 @@ const linkByRelationInputSchema = {
 
 const generateResearchBoardInputSchema = {
 	title: z.string().min(1).max(200),
+	runId: z.string().min(1).max(120).optional(),
 	origin: z.object({ x: z.number(), y: z.number() }).default({ x: 0, y: 0 }),
 	notes: z
 		.array(
@@ -190,6 +192,9 @@ const generateResearchBoardInputSchema = {
 		.default([]),
 	createLinks: z.boolean().default(false),
 	dryRunLayout: z.boolean().default(true),
+	executionMode: z.enum(["sync_small", "job"]).optional(),
+	dedupePolicy: z.enum(["by_url", "by_title", "strict"]).default("by_url"),
+	layoutPolicy: z.enum(["auto_expand", "strict"]).default("auto_expand"),
 	continueOnError: z.boolean().default(true),
 };
 
@@ -246,6 +251,23 @@ function inBbox(
 	return ax1 <= bx2 && ax2 >= bx1 && ay1 <= by2 && ay2 >= by1;
 }
 
+function renderReferenceText(ref: {
+	label: string;
+	url?: string;
+	source?: string;
+	notes?: string;
+	tags: string[];
+}) {
+	const lines = [
+		ref.label,
+		ref.url || null,
+		ref.source ? `Source: ${ref.source}` : null,
+		ref.notes || null,
+		ref.tags.length ? `Tags: ${ref.tags.join(", ")}` : null,
+	].filter(Boolean) as string[];
+	return lines.join("\n");
+}
+
 function renderResearchNoteText(
 	note: {
 		text: string;
@@ -281,6 +303,69 @@ function relationKey(fromNodeId: string, toNodeId: string, relation: string): st
 	return `${fromNodeId}=>${toNodeId}::${relation}`;
 }
 
+function toSlug(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 60);
+}
+
+type ResearchJobPhase =
+	| "queued"
+	| "scaffold"
+	| "ingestResearchNotes"
+	| "createReferenceWall"
+	| "organizeByTheme"
+	| "linkByRelation"
+	| "autoLayoutBoard"
+	| "completed"
+	| "failed"
+	| "cancelled";
+
+type ResearchJobRecord = {
+	jobId: string;
+	runId: string;
+	status: "queued" | "running" | "completed" | "failed" | "cancelled";
+	phase: ResearchJobPhase;
+	startedAt: string;
+	endedAt?: string;
+	progress: { totalItems: number; processedItems: number };
+	phaseDurations: Record<string, number>;
+	args: z.infer<z.ZodObject<typeof generateResearchBoardInputSchema>>;
+	result?: Record<string, unknown>;
+	error?: { code: string; message: string };
+	cancelRequested: boolean;
+	runner?: () => Promise<void>;
+};
+
+const RESEARCH_JOB_TTL_MS = 1000 * 60 * 60;
+const RESEARCH_JOB_MAX = 200;
+const RESEARCH_JOBS = new Map<string, ResearchJobRecord>();
+
+function nowIso(): string {
+	return new Date().toISOString();
+}
+
+function randomId(prefix: string): string {
+	return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
+}
+
+function cleanupOldJobs() {
+	const now = Date.now();
+	for (const [id, job] of RESEARCH_JOBS.entries()) {
+		const endedAt = job.endedAt ? Date.parse(job.endedAt) : null;
+		if (endedAt && now - endedAt > RESEARCH_JOB_TTL_MS) {
+			RESEARCH_JOBS.delete(id);
+		}
+	}
+	if (RESEARCH_JOBS.size <= RESEARCH_JOB_MAX) return;
+	const sorted = [...RESEARCH_JOBS.values()].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+	for (const item of sorted.slice(0, RESEARCH_JOBS.size - RESEARCH_JOB_MAX)) {
+		RESEARCH_JOBS.delete(item.jobId);
+	}
+}
+
 function isSectionUnsupportedError(message: string): boolean {
 	const lower = message.toLowerCase();
 	return lower.includes("sections are not available") || lower.includes("not a function");
@@ -303,6 +388,26 @@ async function resolveRef(
 		return { node: null, reason: `No node matched query: ${ref.query}` };
 	}
 	return { node: null, reason: "Missing nodeId/query" };
+}
+
+function normalizeForKey(value?: string | null): string {
+	return (value || "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ")
+		.slice(0, 240);
+}
+
+function createReferenceItemKey(
+	item: { label: string; url?: string; kind?: string },
+	dedupePolicy: "by_url" | "by_title" | "strict",
+): string {
+	const title = normalizeForKey(item.label);
+	const url = normalizeForKey(item.url);
+	const kind = normalizeForKey(item.kind);
+	if (dedupePolicy === "by_title") return `t:${title}`;
+	if (dedupePolicy === "strict") return `u:${url}|t:${title}|k:${kind}`;
+	return `u:${url || `t:${title}`}`;
 }
 
 async function ingestResearchNotesInternal(
@@ -381,10 +486,12 @@ async function ingestResearchNotesInternal(
 async function createReferenceWallInternal(
 	client: FigJamClient,
 	args: z.infer<z.ZodObject<typeof createReferenceWallInputSchema>>,
+	options?: { runId?: string; dedupePolicy?: "by_url" | "by_title" | "strict" },
 ) {
 	const { title, references, origin, layout, continueOnError } = args;
 	const kindSectionIds: Record<string, string | undefined> = {};
 	const referenceStickyIds: string[] = [];
+	const reusedReferenceIds: string[] = [];
 	const failed: Array<{
 		step: "createRootSection" | "createKindSection" | "createTitle" | "createReferenceSticky";
 		index?: number;
@@ -393,6 +500,28 @@ async function createReferenceWallInternal(
 	}> = [];
 	let rootSectionId: string | undefined;
 	let titleNodeId: string | undefined;
+	const runId = options?.runId;
+	const dedupePolicy = options?.dedupePolicy || "by_url";
+	const existingByItemKey = new Map<string, FlatNode>();
+	if (runId) {
+		for (const node of flattenNodes(await client.getBoardNodes())) {
+			const metadataRaw = node.pluginData?.["figjam.metadata"];
+			let itemKey: string | undefined;
+			let metadataRunId: string | undefined;
+			if (metadataRaw) {
+				try {
+					const parsed = JSON.parse(metadataRaw) as Record<string, unknown>;
+					if (typeof parsed?.itemKey === "string") itemKey = parsed.itemKey;
+					if (typeof parsed?.runId === "string") metadataRunId = parsed.runId;
+				} catch {
+					// Ignore invalid metadata payload.
+				}
+			}
+			if (metadataRunId === runId && itemKey) {
+				existingByItemKey.set(itemKey, node);
+			}
+		}
+	}
 
 	const byKind = new Map<string, typeof references>();
 	for (const k of KIND_ORDER) byKind.set(k, []);
@@ -402,13 +531,17 @@ async function createReferenceWallInternal(
 		byKind.set(ref.kind, arr);
 	}
 
+	const nonEmptyKindCount = KIND_ORDER.reduce((acc, kind) => acc + ((byKind.get(kind) || []).length > 0 ? 1 : 0), 0);
 	try {
 		const root = await client.createSection({
 			name: title,
 			x: origin.x,
 			y: origin.y,
-			width: layout.mode === "columns_by_kind" ? 2200 : 1600,
-			height: 1200,
+			width:
+				layout.mode === "columns_by_kind"
+					? Math.max(1600, nonEmptyKindCount * (layout.columnGap + 220) + layout.sectionPadding * 2)
+					: 2200,
+			height: Math.max(1200, 240 + Math.ceil(references.length / 2) * layout.rowGap),
 		});
 		rootSectionId = root.id;
 	} catch (error) {
@@ -431,29 +564,49 @@ async function createReferenceWallInternal(
 	if (layout.mode === "single_grid") {
 		for (let i = 0; i < references.length; i += 1) {
 			const ref = references[i];
-			const rendered = [
-				`kind:${ref.kind}`,
-				`label:${ref.label}`,
-				ref.url ? `url:${ref.url}` : null,
-				ref.source ? `source:${ref.source}` : null,
-				ref.tags.length ? `tags:${ref.tags.join(",")}` : null,
-				ref.notes ? `notes:${ref.notes}` : null,
-			]
-				.filter(Boolean)
-				.join("\n");
-			const x = origin.x + layout.sectionPadding + (i % 4) * layout.columnGap;
-			const y = origin.y + 80 + Math.floor(i / 4) * layout.rowGap;
+			const rendered = renderReferenceText(ref);
+			const x = origin.x + layout.sectionPadding + (i % 3) * layout.columnGap;
+			const y = origin.y + 110 + Math.floor(i / 3) * layout.rowGap;
 			try {
-				if (ref.url) {
-					try {
-						const linkNode = await client.createLink({ url: ref.url, x, y });
-						referenceStickyIds.push(linkNode.id);
-						continue;
-					} catch {
-						// Fallback to sticky text when link card APIs are unavailable.
-					}
+				const itemKey = createReferenceItemKey(ref, dedupePolicy);
+				const existingNode = runId ? existingByItemKey.get(itemKey) : undefined;
+				if (existingNode) {
+					await client.moveNode({ nodeId: existingNode.id, x, y });
+					await client.updateNode({
+						nodeId: existingNode.id,
+						role: "reference",
+						sourceUrl: ref.url,
+						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+					});
+					referenceStickyIds.push(existingNode.id);
+					reusedReferenceIds.push(existingNode.id);
+					continue;
 				}
-				const sticky = await client.createSticky({ text: rendered, x, y });
+				if (ref.url) {
+					const linkRendered = await createLinkWithImageFallback(async () => client, {
+						url: ref.url,
+						title: ref.label,
+						x,
+						y,
+						role: "reference",
+						preferNative: true,
+						groupId: `kind:${ref.kind}`,
+					});
+					await client.updateNode({
+						nodeId: linkRendered.primary.id,
+						sourceUrl: ref.url,
+						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+					});
+					referenceStickyIds.push(linkRendered.primary.id);
+					if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
+					continue;
+				}
+				const sticky = await client.createSticky({
+					text: rendered,
+					x,
+					y,
+					metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+				});
 				referenceStickyIds.push(sticky.id);
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
@@ -466,16 +619,16 @@ async function createReferenceWallInternal(
 		for (const kind of KIND_ORDER) {
 			const refs = byKind.get(kind) || [];
 			if (refs.length === 0) continue;
-			const sectionX = origin.x + kindIndex * layout.columnGap;
-			const sectionY = origin.y + 70;
+			const sectionX = origin.x + layout.sectionPadding + kindIndex * layout.columnGap;
+			const sectionY = origin.y + 84;
 			let kindSectionId: string | undefined;
 			try {
 				const kindSection = await client.createSection({
 					name: kind,
 					x: sectionX,
 					y: sectionY,
-					width: 300,
-					height: Math.max(220, refs.length * (layout.rowGap * 0.8)),
+					width: Math.max(520, layout.columnGap - 40),
+					height: Math.max(360, 120 + refs.length * layout.rowGap),
 				});
 				kindSectionId = kindSection.id;
 				kindSectionIds[kind] = kindSectionId;
@@ -497,29 +650,52 @@ async function createReferenceWallInternal(
 
 			for (let i = 0; i < refs.length; i += 1) {
 				const ref = refs[i];
-				const rendered = [
-					`kind:${ref.kind}`,
-					`label:${ref.label}`,
-					ref.url ? `url:${ref.url}` : null,
-					ref.source ? `source:${ref.source}` : null,
-					ref.tags.length ? `tags:${ref.tags.join(",")}` : null,
-					ref.notes ? `notes:${ref.notes}` : null,
-				]
-					.filter(Boolean)
-					.join("\n");
+				const rendered = renderReferenceText(ref);
 				try {
-					const x = sectionX + layout.sectionPadding;
-					const y = sectionY + 45 + i * layout.rowGap;
-					if (ref.url) {
-						try {
-							const linkNode = await client.createLink({ url: ref.url, x, y });
-							referenceStickyIds.push(linkNode.id);
-							continue;
-						} catch {
-							// Fallback to sticky text when link card APIs are unavailable.
-						}
+					const x = sectionX + 18;
+					const y = sectionY + 54 + i * layout.rowGap;
+					const itemKey = createReferenceItemKey(ref, dedupePolicy);
+					const existingNode = runId ? existingByItemKey.get(itemKey) : undefined;
+					if (existingNode) {
+						await client.moveNode({ nodeId: existingNode.id, x, y });
+						await client.updateNode({
+							nodeId: existingNode.id,
+							groupId: `kind:${kind}`,
+							role: "reference",
+							sourceUrl: ref.url,
+							metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+						});
+						referenceStickyIds.push(existingNode.id);
+						reusedReferenceIds.push(existingNode.id);
+						continue;
 					}
-					const sticky = await client.createSticky({ text: rendered, x, y });
+					if (ref.url) {
+						const linkRendered = await createLinkWithImageFallback(async () => client, {
+							url: ref.url,
+							title: ref.label,
+							x,
+							y,
+							role: "reference",
+							preferNative: true,
+							groupId: `kind:${kind}`,
+						});
+						await client.updateNode({
+							nodeId: linkRendered.primary.id,
+							groupId: `kind:${kind}`,
+							sourceUrl: ref.url,
+							metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+						});
+						referenceStickyIds.push(linkRendered.primary.id);
+						if (linkRendered.imageNode?.id) referenceStickyIds.push(linkRendered.imageNode.id);
+						continue;
+					}
+					const sticky = await client.createSticky({
+						text: rendered,
+						x,
+						y,
+						groupId: `kind:${kind}`,
+						metadata: { runId, itemKey, label: ref.label, kind: ref.kind },
+					});
 					referenceStickyIds.push(sticky.id);
 				} catch (error) {
 					const msg = error instanceof Error ? error.message : String(error);
@@ -548,6 +724,7 @@ async function createReferenceWallInternal(
 		summary: {
 			requested: references.length,
 			created: referenceStickyIds.length,
+			reused: reusedReferenceIds.length,
 			failed: failed.length,
 			kinds: kindsCount,
 		},
@@ -605,8 +782,8 @@ async function organizeByThemeInternal(
 					name: theme.name,
 					x: themeX,
 					y: themeY,
-					width: 360,
-					height: Math.max(240, 120 + resolved.length * 160),
+					width: 520,
+					height: Math.max(360, 180 + resolved.length * 320),
 				});
 				clusterSectionId = section.id;
 			} catch {
@@ -614,14 +791,30 @@ async function organizeByThemeInternal(
 			}
 			const titleNode = await client.createText({ text: theme.name, x: themeX + 12, y: themeY + 12, fontSize: 20 });
 			titleNodeId = titleNode.id;
-			for (let i = 0; i < resolved.length; i += 1) {
-				const noteText = textForNode(resolved[i]);
-				const sticky = await client.createSticky({
-					text: noteText || `[node:${resolved[i].id}]`,
-					x: themeX + 20,
-					y: themeY + 55 + i * 160,
+
+			const uniqueById = new Map<string, FlatNode>();
+			for (const node of resolved) {
+				if (node.type === "CONNECTOR" || node.type === "SECTION") continue;
+				uniqueById.set(node.id, node);
+			}
+
+			const themeSlug = toSlug(theme.name) || "theme";
+			let idx = 0;
+			for (const node of uniqueById.values()) {
+				const col = idx % 2;
+				const row = Math.floor(idx / 2);
+				const targetX = themeX + 20 + col * 250;
+				const targetY = themeY + 64 + row * 300;
+				await client.moveNode({ nodeId: node.id, x: targetX, y: targetY });
+				await client.updateNode({
+					nodeId: node.id,
+					groupId: `theme:${themeSlug}`,
+					containerId: clusterSectionId,
+					role: "theme_member",
+					metadata: { theme: theme.name },
 				});
-				stickyIds.push(sticky.id);
+				stickyIds.push(node.id);
+				idx += 1;
 			}
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
@@ -728,6 +921,30 @@ async function linkByRelationInternal(
 	};
 }
 
+async function captureRenderValidation(client: FigJamClient, candidateNodeIds: Array<string | undefined>) {
+	const nodeId = candidateNodeIds.find((id): id is string => typeof id === "string" && id.length > 0);
+	if (!nodeId) {
+		return { attempted: false, ok: false, nodeId: null, error: "NO_NODE_FOR_VALIDATION" };
+	}
+	try {
+		const shot = await client.captureNodeScreenshot(nodeId, 2);
+		return {
+			attempted: true,
+			ok: true,
+			nodeId,
+			byteLength: shot.byteLength,
+			bounds: shot.bounds,
+		};
+	} catch (error) {
+		return {
+			attempted: true,
+			ok: false,
+			nodeId,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 export function registerResearchWorkspaceTools(server: McpServer, getClient: GetFigJamClient): void {
 	server.tool(
 		"ingestResearchNotes",
@@ -737,7 +954,11 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 			try {
 				const client = await getClient();
 				const payload = await ingestResearchNotesInternal(client, args as any);
-				return ok(payload);
+				const renderValidation = await captureRenderValidation(
+					client,
+					(payload.created || []).map((item: { id?: string }) => item.id),
+				);
+				return ok({ ...payload, renderValidation });
 			} catch (error) {
 				return fail(error, "Failed to run ingestResearchNotes");
 			}
@@ -752,7 +973,8 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 			try {
 				const client = await getClient();
 				const payload = await createReferenceWallInternal(client, args as any);
-				return ok(payload);
+				const renderValidation = await captureRenderValidation(client, payload.wall?.referenceStickyIds || []);
+				return ok({ ...payload, renderValidation });
 			} catch (error) {
 				return fail(error, "Failed to run createReferenceWall");
 			}
@@ -767,7 +989,15 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 			try {
 				const client = await getClient();
 				const payload = await organizeByThemeInternal(client, args as any);
-				return ok(payload);
+				const createdClusterIds = (payload.themes || []).flatMap(
+					(item: { clusterSectionId?: string; titleNodeId?: string; stickyIds?: string[] }) => [
+						item.clusterSectionId,
+						item.titleNodeId,
+						...(item.stickyIds || []),
+					],
+				);
+				const renderValidation = await captureRenderValidation(client, createdClusterIds);
+				return ok({ ...payload, renderValidation });
 			} catch (error) {
 				return fail(error, "Failed to run organizeByTheme");
 			}
@@ -782,7 +1012,11 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 			try {
 				const client = await getClient();
 				const payload = await linkByRelationInternal(client, args as any);
-				return ok(payload);
+				const renderValidation = await captureRenderValidation(
+					client,
+					(payload.created || []).map((item: { connectorId?: string }) => item.connectorId),
+				);
+				return ok({ ...payload, renderValidation });
 			} catch (error) {
 				return fail(error, "Failed to run linkByRelation");
 			}
@@ -794,29 +1028,47 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 		"Generate a deterministic structured research board scaffold and populate it.",
 		generateResearchBoardInputSchema,
 		async (args) => {
-			const { title, origin, notes, references, themes, createLinks, dryRunLayout, continueOnError } =
-				args as z.infer<z.ZodObject<typeof generateResearchBoardInputSchema>>;
-			const failed: Array<{
-				step:
-					| "scaffold"
-					| "ingestResearchNotes"
-					| "createReferenceWall"
-					| "organizeByTheme"
-					| "autoLayoutBoard"
-					| "linkByRelation";
-				error: string;
-			}> = [];
+			const input = args as z.infer<z.ZodObject<typeof generateResearchBoardInputSchema>>;
+			const runId = input.runId || randomId("run");
+			const executionMode = input.executionMode || (input.references.length > 20 ? "job" : "sync_small");
+			const totalItems = input.notes.length + input.references.length + input.themes.length;
+			const createJob = () => {
+				const job: ResearchJobRecord = {
+					jobId: randomId("job"),
+					runId,
+					status: "queued",
+					phase: "queued",
+					startedAt: nowIso(),
+					progress: { totalItems, processedItems: 0 },
+					phaseDurations: {},
+					args: { ...input, runId },
+					cancelRequested: false,
+				};
+				cleanupOldJobs();
+				RESEARCH_JOBS.set(job.jobId, job);
+				return job;
+			};
 
-			try {
+			const executeFlow = async (job?: ResearchJobRecord) => {
+				const phaseStartedAt = Date.now();
+				const markPhase = (phase: ResearchJobPhase, processedDelta = 0) => {
+					if (!job) return;
+					job.phaseDurations[job.phase] = (job.phaseDurations[job.phase] || 0) + (Date.now() - phaseStartedAt);
+					job.phase = phase;
+					job.status = phase === "failed" || phase === "cancelled" ? phase : "running";
+					job.progress.processedItems = Math.min(job.progress.totalItems, job.progress.processedItems + processedDelta);
+				};
+				const checkCancelled = () => {
+					if (!job?.cancelRequested) return false;
+					job.phase = "cancelled";
+					job.status = "cancelled";
+					job.endedAt = nowIso();
+					return true;
+				};
+				const failed: Array<{ step: string; error: string }> = [];
+				const { title, origin, notes, references, themes, createLinks, dryRunLayout, continueOnError, dedupePolicy } = input;
 				const client = await getClient();
-
-				const sectionIds: {
-					intake?: string;
-					references?: string;
-					themes?: string;
-					questions?: string;
-					decisions?: string;
-				} = {};
+				const sectionIds: { intake?: string; references?: string; themes?: string; questions?: string; decisions?: string } = {};
 				const baseSections = [
 					{ key: "intake", x: origin.x, y: origin.y, name: `${title} - Intake` },
 					{ key: "references", x: origin.x + 1200, y: origin.y, name: `${title} - References` },
@@ -825,7 +1077,13 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					{ key: "decisions", x: origin.x + 2400, y: origin.y + 900, name: `${title} - Decisions` },
 				] as const;
 
+				markPhase("scaffold");
+				if (checkCancelled()) return { cancelled: true };
 				for (const s of baseSections) {
+					if (job?.cancelRequested) {
+						markPhase("cancelled");
+						return { cancelled: true };
+					}
 					try {
 						const section = await client.createSection({
 							name: s.name,
@@ -833,8 +1091,9 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 							y: s.y,
 							width: 1000,
 							height: 760,
+							metadata: { runId, itemKey: `section:${toSlug(s.key)}` },
 						});
-						(sectionIds as any)[s.key] = section.id;
+						(sectionIds as Record<string, string>)[s.key] = section.id;
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!isSectionUnsupportedError(msg)) {
@@ -843,7 +1102,13 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 						}
 					}
 					try {
-						await client.createText({ text: s.name, x: s.x + 16, y: s.y + 12, fontSize: 24 });
+						await client.createText({
+							text: s.name,
+							x: s.x + 16,
+							y: s.y + 12,
+							fontSize: 24,
+							metadata: { runId, itemKey: `section-title:${toSlug(s.key)}` },
+						});
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) throw new Error(`Scaffold title failed at ${s.key}: ${msg}`);
@@ -852,32 +1117,29 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 				}
 
 				let ingestStep: { created: number; failed: number } | undefined;
+				let ingestCreatedNodes: Array<{ id: string; renderedText: string }> = [];
 				if (notes.length > 0) {
+					markPhase("ingestResearchNotes");
+					if (checkCancelled()) return { cancelled: true };
 					try {
 						const ingest = await ingestResearchNotesInternal(client, {
 							notes,
 							placement: {
-								mode: "grid",
-								originX: origin.x + 24,
-								originY: origin.y + 70,
+								mode: "column",
+								originX: origin.x + 40,
+								originY: origin.y + 96,
 								columns: 3,
 								gapX: 260,
-								gapY: 180,
+								gapY: 300,
 							},
-							formatting: {
-								includeMetadataPrefix: true,
-								metadataOrder: ["type", "source", "confidence", "tags"],
-							},
+							formatting: { includeMetadataPrefix: false, metadataOrder: ["type", "source", "confidence", "tags"] },
 							dedupe: { enabled: false, scope: "batch", caseSensitive: false },
 							continueOnError,
 						});
+						ingestCreatedNodes = ingest.created.map((item) => ({ id: item.id, renderedText: item.renderedText }));
 						ingestStep = { created: ingest.summary.created, failed: ingest.summary.failed };
-						if (ingest.failed.length > 0) {
-							failed.push({
-								step: "ingestResearchNotes",
-								error: `Partial ingest failures: ${ingest.failed.length}`,
-							});
-						}
+						if (ingest.failed.length > 0) failed.push({ step: "ingestResearchNotes", error: `Partial ingest failures: ${ingest.failed.length}` });
+						if (job) job.progress.processedItems += notes.length;
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) throw error;
@@ -885,28 +1147,25 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					}
 				}
 
-				let referenceStep: { created: number; failed: number } | undefined;
+				let referenceStep: { created: number; reused?: number; failed: number } | undefined;
 				if (references.length > 0) {
+					markPhase("createReferenceWall");
+					if (checkCancelled()) return { cancelled: true };
 					try {
-						const wall = await createReferenceWallInternal(client, {
-							title: `${title} References`,
-							references,
-							origin: { x: origin.x + 1220, y: origin.y + 30 },
-							layout: {
-								mode: "columns_by_kind",
-								columnGap: 320,
-								rowGap: 180,
-								sectionPadding: 56,
+						const wall = await createReferenceWallInternal(
+							client,
+							{
+								title: `${title} References`,
+								references,
+								origin: { x: origin.x + 1220, y: origin.y + 30 },
+								layout: { mode: "columns_by_kind", columnGap: 560, rowGap: 360, sectionPadding: 56 },
+								continueOnError,
 							},
-							continueOnError,
-						});
-						referenceStep = { created: wall.summary.created, failed: wall.summary.failed };
-						if (wall.failed.length > 0) {
-							failed.push({
-								step: "createReferenceWall",
-								error: `Partial reference wall failures: ${wall.failed.length}`,
-							});
-						}
+							{ runId, dedupePolicy },
+						);
+						referenceStep = { created: wall.summary.created, reused: wall.summary.reused, failed: wall.summary.failed };
+						if (wall.failed.length > 0) failed.push({ step: "createReferenceWall", error: `Partial reference wall failures: ${wall.failed.length}` });
+						if (job) job.progress.processedItems += references.length;
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) throw error;
@@ -916,27 +1175,26 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 
 				let themeStep: { createdThemes: number; failed: number } | undefined;
 				if (themes.length > 0) {
+					markPhase("organizeByTheme");
+					if (checkCancelled()) return { cancelled: true };
 					try {
+						const themeRefs = themes.map((t) => {
+							const queries = t.noteQueries.map((q) => q.toLowerCase());
+							const noteRefs = ingestCreatedNodes
+								.filter((n) => queries.some((q) => n.renderedText.toLowerCase().includes(q)))
+								.map((n) => ({ nodeId: n.id }));
+							return { name: t.name, noteRefs };
+						});
 						const themed = await organizeByThemeInternal(client, {
-							themes: themes.map((t) => ({
-								name: t.name,
-								noteRefs: t.noteQueries.map((q) => ({ query: q })),
-							})),
+							themes: themeRefs.filter((t) => t.noteRefs.length > 0),
 							origin: { x: origin.x + 20, y: origin.y + 930 },
-							layout: { mode: "grid", columns: 2, gapX: 460, gapY: 340 },
+							layout: { mode: "grid", columns: 2, gapX: 640, gapY: 700 },
 							unresolvedPolicy: "skip",
 							continueOnError,
 						});
-						themeStep = {
-							createdThemes: themed.summary.createdThemes,
-							failed: themed.summary.failed,
-						};
-						if (themed.failed.length > 0) {
-							failed.push({
-								step: "organizeByTheme",
-								error: `Partial theme failures: ${themed.failed.length}`,
-							});
-						}
+						themeStep = { createdThemes: themed.summary.createdThemes, failed: themed.summary.failed };
+						if (themed.failed.length > 0) failed.push({ step: "organizeByTheme", error: `Partial theme failures: ${themed.failed.length}` });
+						if (job) job.progress.processedItems += themes.length;
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
 						if (!continueOnError) throw error;
@@ -946,31 +1204,19 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 
 				let linkStep: { created: number; failed: number } | undefined;
 				if (createLinks && themes.length > 0) {
+					markPhase("linkByRelation");
+					if (checkCancelled()) return { cancelled: true };
 					try {
 						const relationLinks: z.infer<z.ZodObject<typeof linkByRelationInputSchema>>["links"] = [];
 						for (const t of themes) {
 							for (let i = 1; i < t.noteQueries.length; i += 1) {
-								relationLinks.push({
-									from: { query: t.noteQueries[i - 1] },
-									to: { query: t.noteQueries[i] },
-									relation: "related",
-									label: undefined,
-								});
+								relationLinks.push({ from: { query: t.noteQueries[i - 1] }, to: { query: t.noteQueries[i] }, relation: "related", label: undefined });
 							}
 						}
 						if (relationLinks.length > 0) {
-							const linked = await linkByRelationInternal(client, {
-								links: relationLinks,
-								dedupeExisting: true,
-								continueOnError,
-							});
+							const linked = await linkByRelationInternal(client, { links: relationLinks, dedupeExisting: true, continueOnError });
 							linkStep = { created: linked.summary.created, failed: linked.summary.failed };
-							if (linked.failed.length > 0) {
-								failed.push({
-									step: "linkByRelation",
-									error: `Partial relation failures: ${linked.failed.length}`,
-								});
-							}
+							if (linked.failed.length > 0) failed.push({ step: "linkByRelation", error: `Partial relation failures: ${linked.failed.length}` });
 						}
 					} catch (error) {
 						const msg = error instanceof Error ? error.message : String(error);
@@ -979,39 +1225,45 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 					}
 				}
 
-				let layoutStep: { dryRun: boolean; evaluated: number } | undefined;
-				try {
-					const allNodes = flattenNodes(await client.getBoardNodes());
-					const targets = allNodes.filter(
-						(n) =>
-							["STICKY", "TEXT", "SHAPE_WITH_TEXT"].includes(n.type) &&
-							typeof n.x === "number" &&
-							typeof n.y === "number" &&
-							inBbox(n, { x: origin.x - 40, y: origin.y - 40, width: 3600, height: 2200 }),
-					);
-					layoutStep = { dryRun: dryRunLayout, evaluated: targets.length };
-					if (!dryRunLayout) {
-						for (let i = 0; i < targets.length; i += 1) {
-							const col = i % 6;
-							const row = Math.floor(i / 6);
-							await client.moveNode({
-								nodeId: targets[i].id,
-								x: origin.x + 40 + col * 280,
-								y: origin.y + 80 + row * 180,
-							});
-						}
+				markPhase("autoLayoutBoard");
+				if (checkCancelled()) return { cancelled: true };
+				const layoutStep = {
+					dryRun: dryRunLayout,
+					evaluated: references.length + notes.length + themes.length,
+					moved: 0,
+					mode: "safe_no_global_relayout",
+				};
+
+				let validationCandidates: string[] = [
+					sectionIds.intake,
+					sectionIds.references,
+					sectionIds.themes,
+					sectionIds.questions,
+					sectionIds.decisions,
+				].filter((id): id is string => typeof id === "string" && id.length > 0);
+				if (validationCandidates.length === 0) {
+					try {
+						validationCandidates = flattenNodes(await client.getBoardNodes())
+							.filter(
+								(n) =>
+									["STICKY", "TEXT", "SHAPE_WITH_TEXT", "GROUP", "LINK_UNFURL", "RECTANGLE"].includes(n.type) &&
+									typeof n.x === "number" &&
+									typeof n.y === "number" &&
+									inBbox(n, { x: origin.x - 80, y: origin.y - 80, width: 4200, height: 3000 }),
+							)
+							.slice(0, 20)
+							.map((n) => n.id);
+					} catch {
+						validationCandidates = [];
 					}
-				} catch (error) {
-					const msg = error instanceof Error ? error.message : String(error);
-					if (!continueOnError) throw error;
-					failed.push({ step: "autoLayoutBoard", error: msg });
 				}
 
-				return ok({
-					board: {
-						title,
-						sectionIds,
-					},
+				const result = {
+					jobId: job?.jobId || null,
+					runId,
+					phase: "completed",
+					progress: { totalItems, processedItems: totalItems },
+					board: { title, sectionIds },
 					steps: {
 						ingestResearchNotes: ingestStep,
 						createReferenceWall: referenceStep,
@@ -1024,10 +1276,182 @@ export function registerResearchWorkspaceTools(server: McpServer, getClient: Get
 						success: failed.length === 0,
 						failedSteps: failed.length,
 					},
+					renderValidation: await captureRenderValidation(client, validationCandidates),
+				};
+				if (job) {
+					job.result = result;
+					job.phase = "completed";
+					job.status = "completed";
+					job.endedAt = nowIso();
+					job.progress.processedItems = totalItems;
+				}
+				return result;
+			};
+
+			if (executionMode === "job") {
+				const job = createJob();
+				job.runner = async () => {
+					try {
+						job.status = "running";
+						job.phase = "scaffold";
+						await executeFlow(job);
+					} catch (error) {
+						job.phase = "failed";
+						job.status = "failed";
+						job.endedAt = nowIso();
+						job.error = { code: "TIMEOUT_PARTIAL_WRITE", message: error instanceof Error ? error.message : String(error) };
+					}
+				};
+				queueMicrotask(() => {
+					void job.runner?.();
 				});
+				return ok({
+					jobId: job.jobId,
+					runId: job.runId,
+					phase: job.phase,
+					status: job.status,
+					progress: job.progress,
+				});
+			}
+
+			try {
+				const syncResult = await executeFlow();
+				return ok(syncResult);
 			} catch (error) {
 				return fail(error, "Failed to run generateResearchBoard");
 			}
+		},
+	);
+
+	server.tool(
+		"figjam_get_job_status",
+		"Get status for a research workflow job execution.",
+		{ jobId: z.string().min(1) },
+		async ({ jobId }) => {
+			const job = RESEARCH_JOBS.get(jobId);
+			if (!job) {
+				return {
+					isError: true,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								error: {
+									code: "JOB_NOT_FOUND",
+									tool: "figjam_get_job_status",
+									message: `No job found for id '${jobId}'`,
+								},
+							}),
+						},
+					],
+				};
+			}
+			return ok(job);
+		},
+	);
+
+	server.tool(
+		"figjam_cancel_job",
+		"Cancel a running research workflow job.",
+		{ jobId: z.string().min(1) },
+		async ({ jobId }) => {
+			const job = RESEARCH_JOBS.get(jobId);
+			if (!job) {
+				return {
+					isError: true,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								error: {
+									code: "JOB_NOT_FOUND",
+									tool: "figjam_cancel_job",
+									message: `No job found for id '${jobId}'`,
+								},
+							}),
+						},
+					],
+				};
+			}
+			if (job.status === "cancelled") {
+				return {
+					isError: true,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								error: {
+									code: "RUN_ALREADY_CANCELLED",
+									tool: "figjam_cancel_job",
+									message: `Job '${jobId}' is already cancelled`,
+								},
+							}),
+						},
+					],
+				};
+			}
+			job.cancelRequested = true;
+			job.status = "cancelled";
+			job.phase = "cancelled";
+			job.endedAt = nowIso();
+			return ok({ jobId, status: job.status, phase: job.phase, runId: job.runId });
+		},
+	);
+
+	server.tool(
+		"figjam_resume_job",
+		"Resume a cancelled or failed research workflow job.",
+		{ jobId: z.string().min(1) },
+		async ({ jobId }) => {
+			const job = RESEARCH_JOBS.get(jobId);
+			if (!job) {
+				return {
+					isError: true,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								error: {
+									code: "JOB_NOT_FOUND",
+									tool: "figjam_resume_job",
+									message: `No job found for id '${jobId}'`,
+								},
+							}),
+						},
+					],
+				};
+			}
+			if (job.status === "running") return ok({ jobId, status: job.status, phase: job.phase, runId: job.runId });
+			if (job.status === "completed") return ok({ jobId, status: job.status, phase: job.phase, runId: job.runId, result: job.result || null });
+			job.cancelRequested = false;
+			job.status = "queued";
+			job.phase = "queued";
+			job.startedAt = nowIso();
+			job.endedAt = undefined;
+			job.error = undefined;
+			job.result = undefined;
+			job.progress.processedItems = 0;
+			if (!job.runner) {
+				return {
+					isError: true,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								error: {
+									code: "JOB_NOT_FOUND",
+									tool: "figjam_resume_job",
+									message: `Job '${jobId}' cannot be resumed`,
+								},
+							}),
+						},
+					],
+				};
+			}
+			queueMicrotask(() => {
+				void job.runner?.();
+			});
+			return ok({ jobId, status: job.status, phase: job.phase, runId: job.runId });
 		},
 	);
 }

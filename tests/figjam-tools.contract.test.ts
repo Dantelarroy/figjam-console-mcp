@@ -36,6 +36,7 @@ function createMockClient() {
 		getConnections: jest.fn().mockResolvedValue([{ id: "c1", type: "CONNECTOR" }]),
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
 		updateNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", name: "Updated node" }),
+		deleteNode: jest.fn().mockResolvedValue({ deleted: true, nodeId: "n1" }),
 		scanBoardState: jest.fn().mockResolvedValue({
 			fileKey: "file-key-1",
 			pageId: "0:1",
@@ -89,8 +90,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 29 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(29);
+	it("registers the FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(48);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -118,11 +119,30 @@ describe("FigJam tools contract", () => {
 				"organizeByTheme",
 				"linkByRelation",
 				"generateResearchBoard",
+				"figjam_get_job_status",
+				"figjam_cancel_job",
+				"figjam_resume_job",
 				"figjam_index_board",
 				"getBoardIndex",
 				"figjam_upsert_artifact",
 				"figjam_organize_by_alias",
 				"figjam_validate_board_index",
+				"figjam_render_reference_card",
+				"figjam_render_reference_set",
+				"figjam_read_board_state",
+				"figjam_get_artifact_collection",
+				"figjam_relocate_artifacts",
+				"figjam_delete_artifacts",
+				"figjam_delete_by_bbox",
+				"figjam_archive_by_bbox",
+				"figjam_delete_by_run",
+				"figjam_bulk_upsert_artifacts",
+				"figjam_get_board_graph",
+				"figjam_move_collection",
+				"figjam_archive_collection",
+				"figjam_apply_layout_to_collection",
+				"figjam_export_board_snapshot",
+				"figjam_import_reference_bundle",
 			]),
 		);
 	});
@@ -240,6 +260,249 @@ describe("FigJam tools contract", () => {
 		const codes = data.validation.issues.map((i: any) => i.code);
 		expect(codes).toContain("REQUIRED_ALIAS_MISSING");
 		expect(Array.isArray(data.validation.visualTargets)).toBe(true);
+	});
+
+	it("validates figjam_render_reference_card schema and deterministic render output", async () => {
+		const tool = server._getTool("figjam_render_reference_card");
+		expect(validate("figjam_render_reference_card", { title: "OpenAI", url: "https://openai.com" }).success).toBe(
+			true,
+		);
+		expect(validate("figjam_render_reference_card", { title: "" }).success).toBe(false);
+
+		const result = await tool.handler({
+			title: "OpenAI",
+			url: "https://openai.com",
+			note: "Research reference",
+			x: 100,
+			y: 200,
+			alias: "ref-openai",
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.reference.alias).toBe("ref-openai");
+		expect(data.reference.primaryNodeId).toBe("link-1");
+		expect(data.reference.noteNodeId).toBe("sticky-1");
+	});
+
+	it("validates figjam_render_reference_set schema and partial failure behavior", async () => {
+		const tool = server._getTool("figjam_render_reference_set");
+		expect(
+			validate("figjam_render_reference_set", {
+				items: [{ title: "A", url: "https://example.com" }],
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_render_reference_set", { items: [] }).success).toBe(false);
+
+		client.createLink.mockRejectedValueOnce(new Error("Link preview unavailable"));
+		const result = await tool.handler({
+			items: [
+				{ title: "A", url: "https://example.com" },
+				{ title: "B", url: "https://example.org" },
+			],
+			layout: { mode: "grid", originX: 0, originY: 0, columns: 2, gapX: 300, gapY: 250 },
+			linkPolicy: "native_only",
+			continueOnError: true,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.batch.total).toBe(2);
+		expect(data.batch.failedCount).toBe(1);
+	});
+
+	it("validates figjam_read_board_state schema and output envelope", async () => {
+		const tool = server._getTool("figjam_read_board_state");
+		expect(validate("figjam_read_board_state", {}).success).toBe(true);
+		expect(validate("figjam_read_board_state", { limit: 0 }).success).toBe(false);
+
+		const result = await tool.handler({
+			groupBy: "type",
+			includeRawPluginData: true,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.state.fileKey).toBe("file-key-1");
+		expect(Array.isArray(data.state.entities)).toBe(true);
+		expect(typeof data.state.groupedCounts).toBe("object");
+	});
+
+	it("validates figjam_get_artifact_collection schema and selectors", async () => {
+		const tool = server._getTool("figjam_get_artifact_collection");
+		expect(validate("figjam_get_artifact_collection", { selectors: { aliases: ["idea-1"] } }).success).toBe(
+			true,
+		);
+		expect(validate("figjam_get_artifact_collection", { limit: 0 }).success).toBe(false);
+
+		const result = await tool.handler({
+			selectors: { aliases: ["idea-1"] },
+			sort: "name",
+			limit: 100,
+			offset: 0,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.collection.total).toBe(1);
+		expect(data.collection.items[0].alias).toBe("idea-1");
+	});
+
+	it("validates figjam_relocate_artifacts schema and move behavior", async () => {
+		const tool = server._getTool("figjam_relocate_artifacts");
+		expect(
+			validate("figjam_relocate_artifacts", {
+				selectors: { aliases: ["idea-1"] },
+				layout: { mode: "offset", dx: 10, dy: 20 },
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_relocate_artifacts", { selectors: {}, layout: { columns: 0 } }).success).toBe(
+			false,
+		);
+
+		const result = await tool.handler({
+			selectors: { aliases: ["idea-1"] },
+			layout: { mode: "offset", dx: 100, dy: 50 },
+			targetGroupId: "group-c",
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.relocation.movedCount).toBe(1);
+		expect(client.moveNode).toHaveBeenCalled();
+		expect(client.updateNode).toHaveBeenCalledWith({
+			nodeId: "s1",
+			groupId: "group-c",
+			containerId: undefined,
+		});
+	});
+
+	it("validates figjam_delete_artifacts schema and deterministic deletion output", async () => {
+		const tool = server._getTool("figjam_delete_artifacts");
+		expect(validate("figjam_delete_artifacts", { selectors: { aliases: ["idea-1"] } }).success).toBe(true);
+		expect(validate("figjam_delete_artifacts", { selectors: { aliases: [] } }).success).toBe(true);
+
+		const result = await tool.handler({ selectors: { aliases: ["idea-1"] }, dryRun: false });
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.deletion.deletedCount).toBe(1);
+		expect(client.deleteNode).toHaveBeenCalledWith("s1");
+	});
+
+	it("validates figjam_bulk_upsert_artifacts schema and batch response", async () => {
+		const tool = server._getTool("figjam_bulk_upsert_artifacts");
+		expect(
+			validate("figjam_bulk_upsert_artifacts", {
+				items: [{ create: { kind: "sticky", text: "A" }, alias: "a-1" }],
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_bulk_upsert_artifacts", { items: [] }).success).toBe(false);
+
+		const result = await tool.handler({
+			items: [{ create: { kind: "sticky", text: "A" }, alias: "a-1" }],
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.upsertBatch.total).toBe(1);
+		expect(data.upsertBatch.createdCount).toBe(1);
+	});
+
+	it("validates figjam_get_board_graph schema and graph envelope", async () => {
+		const tool = server._getTool("figjam_get_board_graph");
+		expect(validate("figjam_get_board_graph", {}).success).toBe(true);
+		expect(validate("figjam_get_board_graph", { limit: 0 }).success).toBe(false);
+
+		const result = await tool.handler({
+			scope: {},
+			includeContainmentEdges: true,
+			includeConnectorEdges: true,
+			limit: 100,
+			offset: 0,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(Array.isArray(data.graph.nodes)).toBe(true);
+		expect(Array.isArray(data.graph.edges)).toBe(true);
+	});
+
+	it("validates figjam_move_collection schema and move semantics", async () => {
+		const tool = server._getTool("figjam_move_collection");
+		expect(
+			validate("figjam_move_collection", {
+				selectors: { aliases: ["idea-1"] },
+				move: { mode: "offset", dx: 20, dy: 10 },
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_move_collection", { selectors: {}, move: { columns: 0 } }).success).toBe(false);
+
+		const result = await tool.handler({
+			selectors: { aliases: ["idea-1"] },
+			move: { mode: "offset", dx: 20, dy: 10 },
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.moveCollection.movedCount).toBe(1);
+	});
+
+	it("validates figjam_archive_collection schema and archive semantics", async () => {
+		const tool = server._getTool("figjam_archive_collection");
+		expect(validate("figjam_archive_collection", { selectors: { aliases: ["idea-1"] } }).success).toBe(true);
+		expect(validate("figjam_archive_collection", { archiveGroupId: "" }).success).toBe(false);
+
+		const result = await tool.handler({ selectors: { aliases: ["idea-1"] } });
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.archive.archivedCount).toBe(1);
+	});
+
+	it("validates figjam_apply_layout_to_collection schema and layout output", async () => {
+		const tool = server._getTool("figjam_apply_layout_to_collection");
+		expect(
+			validate("figjam_apply_layout_to_collection", {
+				selectors: { aliases: ["idea-1"] },
+				layout: { mode: "grid", originX: 0, originY: 0, columns: 2, gapX: 300, gapY: 200 },
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_apply_layout_to_collection", { selectors: {}, layout: { columns: 0 } }).success).toBe(
+			false,
+		);
+
+		const result = await tool.handler({
+			selectors: { aliases: ["idea-1"] },
+			layout: { mode: "grid", originX: 0, originY: 0, columns: 1, gapX: 300, gapY: 200 },
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.layoutResult.movedCount).toBe(1);
+	});
+
+	it("validates figjam_export_board_snapshot schema and snapshot envelope", async () => {
+		const tool = server._getTool("figjam_export_board_snapshot");
+		expect(validate("figjam_export_board_snapshot", {}).success).toBe(true);
+		expect(validate("figjam_export_board_snapshot", { includeRawPluginData: "yes" }).success).toBe(false);
+
+		const result = await tool.handler({ scope: {}, includeRawPluginData: true });
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.snapshot.version).toBe("figjam.dbi.v1");
+		expect(Array.isArray(data.snapshot.entities)).toBe(true);
+	});
+
+	it("validates figjam_import_reference_bundle schema and import response", async () => {
+		const tool = server._getTool("figjam_import_reference_bundle");
+		expect(
+			validate("figjam_import_reference_bundle", {
+				items: [{ title: "OpenAI", url: "https://openai.com" }],
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_import_reference_bundle", { items: [] }).success).toBe(false);
+
+		const result = await tool.handler({
+			title: "Bundle",
+			items: [{ title: "OpenAI", url: "https://openai.com" }],
+			layout: { mode: "grid", originX: 0, originY: 0, columns: 2, gapX: 300, gapY: 220 },
+			linkPolicy: "native_only",
+			continueOnError: true,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.bundle.total).toBe(1);
+		expect(data.bundle.createdCount).toBe(1);
 	});
 
 	it("validates captureWebImage schema and deterministic no-target error", async () => {

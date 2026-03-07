@@ -86,11 +86,42 @@ export interface CreateTextInput {
 	metadata?: Record<string, string | number | boolean>;
 }
 
+export interface CreateUrlLinkTextInput {
+	url: string;
+	label?: string;
+	x?: number;
+	y?: number;
+	fontSize?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
+}
+
 export interface CreateLinkInput {
 	url: string;
 	title?: string;
 	x?: number;
 	y?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
+}
+
+export interface CreateFallbackLinkCardInput {
+	url: string;
+	title?: string;
+	x?: number;
+	y?: number;
+	cardWidth?: number;
+	cardHeight?: number;
+	imageBytes: number[];
+	mimeType: string;
 	alias?: string;
 	containerId?: string;
 	groupId?: string;
@@ -134,6 +165,11 @@ export interface MoveNodeInput {
 	y: number;
 }
 
+export interface DeleteNodeResult {
+	deleted: boolean;
+	nodeId: string;
+}
+
 export interface UpdateNodeInput {
 	nodeId: string;
 	title?: string;
@@ -148,6 +184,13 @@ export interface UpdateNodeInput {
 	sourceUrl?: string;
 	role?: string;
 	metadata?: Record<string, string | number | boolean>;
+}
+
+export interface CaptureNodeScreenshotResult {
+	nodeId: string;
+	format: "PNG";
+	byteLength: number;
+	bounds: { x: number; y: number; width: number; height: number };
 }
 
 export class FigJamClient {
@@ -319,6 +362,153 @@ return { id: textNode.id, name: textNode.name, type: textNode.type, x: textNode.
 		);
 	}
 
+	async createUrlLinkText(input: CreateUrlLinkTextInput): Promise<FigJamNodeSummary> {
+		return this.execute<FigJamNodeSummary>(
+			`
+const input = ${JSON.stringify(input)};
+const textNode = figma.createText();
+await figma.loadFontAsync(textNode.fontName);
+const textValue = typeof input.label === "string" && input.label.trim().length > 0 ? input.label.trim() : input.url;
+textNode.characters = textValue;
+if (typeof input.fontSize === "number") textNode.fontSize = input.fontSize;
+if (typeof input.x === "number") textNode.x = input.x;
+if (typeof input.y === "number") textNode.y = input.y;
+if (typeof textNode.setRangeHyperlink === "function") {
+  textNode.setRangeHyperlink(0, textNode.characters.length, { type: "URL", value: input.url });
+}
+figma.currentPage.appendChild(textNode);
+if (typeof textNode.setPluginData === "function") {
+  textNode.setPluginData("figjam.link.url", input.url);
+  if (typeof input.role === "string" && input.role.trim().length > 0) textNode.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) textNode.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) textNode.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) textNode.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) textNode.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") textNode.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  textNode.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
+return { id: textNode.id, name: textNode.name, type: textNode.type, x: textNode.x, y: textNode.y, width: textNode.width, height: textNode.height, text: textNode.characters };
+`,
+			12000,
+		);
+	}
+
+	async createFallbackLinkCard(input: CreateFallbackLinkCardInput): Promise<{
+		card: FigJamNodeSummary;
+		linkText: FigJamNodeSummary;
+		titleText: FigJamNodeSummary;
+		image: FigJamNodeSummary;
+	}> {
+		return this.execute<{
+			card: FigJamNodeSummary;
+			linkText: FigJamNodeSummary;
+			titleText: FigJamNodeSummary;
+			image: FigJamNodeSummary;
+		}>(
+			`
+const input = ${JSON.stringify(input)};
+if (!Array.isArray(input.imageBytes) || input.imageBytes.length === 0) {
+  throw new Error("Missing image payload");
+}
+if (!input.mimeType || typeof input.mimeType !== "string") {
+  throw new Error("Missing mimeType");
+}
+if (typeof figma.createImage !== "function") {
+  throw new Error("IMAGE_INSERT_NOT_SUPPORTED: FigJam runtime does not expose createImage");
+}
+
+const x = typeof input.x === "number" ? input.x : 0;
+const y = typeof input.y === "number" ? input.y : 0;
+const cardWidth = typeof input.cardWidth === "number" ? input.cardWidth : 420;
+const cardHeight = typeof input.cardHeight === "number" ? input.cardHeight : 320;
+const fullTitle = typeof input.title === "string" && input.title.trim().length > 0 ? input.title.trim() : input.url;
+const title = fullTitle.length > 72 ? fullTitle.slice(0, 69) + "..." : fullTitle;
+const hostText = (() => {
+  try {
+    const parsed = new URL(input.url);
+    return parsed.hostname.replace(/^www\\./i, "");
+  } catch {
+    return input.url;
+  }
+})();
+
+const imageBytes = new Uint8Array(input.imageBytes);
+const image = figma.createImage(imageBytes);
+
+const bg = figma.createRectangle();
+bg.name = title;
+bg.resize(cardWidth, cardHeight);
+bg.x = x;
+bg.y = y;
+bg.fills = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+bg.strokes = [{ type: "SOLID", color: { r: 0.86, g: 0.89, b: 0.93 } }];
+bg.strokeWeight = 1;
+if ("cornerRadius" in bg) bg.cornerRadius = 12;
+
+const titleText = figma.createText();
+await figma.loadFontAsync(titleText.fontName);
+titleText.characters = title;
+titleText.fontSize = 18;
+titleText.x = x + 18;
+titleText.y = y + 12;
+
+const linkText = figma.createText();
+await figma.loadFontAsync(linkText.fontName);
+linkText.characters = hostText;
+if (typeof linkText.setRangeHyperlink === "function") {
+  linkText.setRangeHyperlink(0, linkText.characters.length, { type: "URL", value: input.url });
+}
+linkText.fontSize = 12;
+linkText.x = x + 18;
+linkText.y = y + 40;
+
+const imageNode = figma.createRectangle();
+imageNode.name = title + " Preview";
+imageNode.x = x + 18;
+imageNode.y = y + 62;
+imageNode.resize(cardWidth - 36, cardHeight - 80);
+imageNode.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+if ("cornerRadius" in imageNode) imageNode.cornerRadius = 8;
+
+figma.currentPage.appendChild(bg);
+figma.currentPage.appendChild(titleText);
+figma.currentPage.appendChild(linkText);
+figma.currentPage.appendChild(imageNode);
+
+let cardNode = bg;
+if (typeof figma.group === "function") {
+  cardNode = figma.group([bg, titleText, linkText, imageNode], figma.currentPage);
+  cardNode.name = title;
+}
+
+const setMeta = (node) => {
+  if (typeof node.setPluginData !== "function") return;
+  node.setPluginData("figjam.link.url", input.url);
+  if (typeof input.role === "string" && input.role.trim().length > 0) node.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) node.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) node.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) node.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) node.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") node.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  node.setPluginData("figjam.updatedAt", new Date().toISOString());
+};
+
+setMeta(cardNode);
+setMeta(titleText);
+setMeta(linkText);
+setMeta(imageNode);
+
+return {
+  card: { id: cardNode.id, name: cardNode.name, type: cardNode.type, x: cardNode.x, y: cardNode.y, width: cardNode.width, height: cardNode.height, text: input.url },
+  titleText: { id: titleText.id, name: titleText.name, type: titleText.type, x: titleText.x, y: titleText.y, width: titleText.width, height: titleText.height, text: titleText.characters },
+  linkText: { id: linkText.id, name: linkText.name, type: linkText.type, x: linkText.x, y: linkText.y, width: linkText.width, height: linkText.height, text: linkText.characters },
+  image: { id: imageNode.id, name: imageNode.name, type: imageNode.type, x: imageNode.x, y: imageNode.y, width: imageNode.width, height: imageNode.height }
+};
+`,
+			15000,
+		);
+	}
+
 	async createLink(input: CreateLinkInput): Promise<FigJamNodeSummary> {
 		return this.execute<FigJamNodeSummary>(
 			`
@@ -345,20 +535,6 @@ if (typeof input.title === "string" && input.title.trim().length > 0 && typeof l
 }
 if (!linkNode.parent) figma.currentPage.appendChild(linkNode);
 
-// Strict quality gate: only keep rich cards/embeds.
-if (linkNode.type === "LINK_UNFURL") {
-  const data = linkNode.linkUnfurlData || {};
-  const title = typeof data.title === "string" ? data.title.trim() : "";
-  const description = typeof data.description === "string" ? data.description.trim() : "";
-  const hasThumbnail = !!(data.thumbnailUrl || data.thumbnail);
-  const hasFavicon = !!(data.favicon || data.faviconUrl);
-  const isRich = Boolean(title || description || hasThumbnail || hasFavicon);
-  if (!isRich) {
-    linkNode.remove();
-    throw new Error("Link preview exists but has no rich metadata (title/description/thumbnail/favicon).");
-  }
-}
-
 if (typeof linkNode.setPluginData === "function") {
   linkNode.setPluginData("figjam.link.url", input.url);
   if (typeof input.title === "string" && input.title.trim().length > 0) linkNode.setPluginData("figjam.link.title", input.title.trim());
@@ -368,6 +544,8 @@ if (typeof linkNode.setPluginData === "function") {
   if (typeof input.groupId === "string" && input.groupId.trim().length > 0) linkNode.setPluginData("figjam.groupId", input.groupId.trim());
   if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) linkNode.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
   if (input.metadata && typeof input.metadata === "object") linkNode.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  if (input.metadata && typeof input.metadata.runId === "string") linkNode.setPluginData("figjam.runId", input.metadata.runId);
+  if (input.metadata && typeof input.metadata.itemKey === "string") linkNode.setPluginData("figjam.itemKey", input.metadata.itemKey);
   linkNode.setPluginData("figjam.updatedAt", new Date().toISOString());
 }
 
@@ -578,6 +756,30 @@ return connectors.map((connector) => ({
 		);
 	}
 
+	async captureNodeScreenshot(nodeId: string, scale = 2): Promise<CaptureNodeScreenshotResult> {
+		return this.execute<CaptureNodeScreenshotResult>(
+			`
+const input = ${JSON.stringify({ nodeId, scale })};
+const node = await figma.getNodeByIdAsync(input.nodeId);
+if (!node) throw new Error("Node not found: " + input.nodeId);
+if (typeof node.exportAsync !== "function") {
+  throw new Error("NODE_EXPORT_NOT_SUPPORTED");
+}
+const bytes = await node.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: input.scale } });
+const bounds = ("x" in node && "y" in node && "width" in node && "height" in node)
+  ? { x: Number(node.x || 0), y: Number(node.y || 0), width: Number(node.width || 0), height: Number(node.height || 0) }
+  : { x: 0, y: 0, width: 0, height: 0 };
+return {
+  nodeId: node.id,
+  format: "PNG",
+  byteLength: bytes.length,
+  bounds
+};
+`,
+			15000,
+		);
+	}
+
 	async moveNode(input: MoveNodeInput): Promise<FigJamNodeSummary> {
 		return this.execute<FigJamNodeSummary>(
 			`
@@ -598,6 +800,22 @@ return {
   width: typeof node.width === "number" ? node.width : undefined,
   height: typeof node.height === "number" ? node.height : undefined
 };
+`,
+			12000,
+		);
+	}
+
+	async deleteNode(nodeId: string): Promise<DeleteNodeResult> {
+		return this.execute<DeleteNodeResult>(
+			`
+const nodeId = ${JSON.stringify(nodeId)};
+const node = await figma.getNodeByIdAsync(nodeId);
+if (!node) throw new Error("Node not found: " + nodeId);
+if (typeof node.remove !== "function") {
+  throw new Error("Node does not support removal: " + node.type);
+}
+node.remove();
+return { deleted: true, nodeId };
 `,
 			12000,
 		);

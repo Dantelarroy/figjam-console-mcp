@@ -11,6 +11,7 @@ import { registerImageTools } from "../tools/images.js";
 import { registerWorkflowTools } from "../tools/workflows.js";
 import { registerResearchWorkspaceTools } from "../tools/research-workspace.js";
 import { registerDBITools } from "../tools/dbi.js";
+import { registerVisualStateTools } from "../tools/visual-state.js";
 
 export function registerFigJamTools(server: McpServer, getClient: GetFigJamClient): void {
 	registerStickyTools(server, getClient);
@@ -24,4 +25,5 @@ export function registerFigJamTools(server: McpServer, getClient: GetFigJamClien
 	registerWorkflowTools(server, getClient);
 	registerResearchWorkspaceTools(server, getClient);
 	registerDBITools(server, getClient);
+	registerVisualStateTools(server, getClient);
 }
