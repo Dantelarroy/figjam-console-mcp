@@ -10,6 +10,18 @@ export interface FigJamNodeSummary {
 	height?: number;
 	text?: string;
 	children?: FigJamNodeSummary[];
+	parentId?: string;
+	pluginData?: Record<string, string>;
+	connectorStart?: { endpointNodeId?: string; magnet?: string } | null;
+	connectorEnd?: { endpointNodeId?: string; magnet?: string } | null;
+}
+
+export interface FigJamBoardScan {
+	fileKey: string | null;
+	pageId: string;
+	pageName: string;
+	generatedAt: string;
+	nodes: FigJamNodeSummary[];
 }
 
 export interface CreateStickyInput {
@@ -483,6 +495,66 @@ return {
   y: node.y,
   width: typeof node.width === "number" ? node.width : undefined,
   height: typeof node.height === "number" ? node.height : undefined
+};
+`,
+			12000,
+		);
+	}
+
+	async scanBoardState(): Promise<FigJamBoardScan> {
+		return this.execute<FigJamBoardScan>(
+			`
+function readPluginData(node) {
+  const data = {};
+  if (typeof node.getPluginDataKeys !== "function" || typeof node.getPluginData !== "function") {
+    return data;
+  }
+  for (const key of node.getPluginDataKeys()) {
+    if (!key.startsWith("figjam.")) continue;
+    const value = node.getPluginData(key);
+    if (typeof value === "string" && value.length > 0) {
+      data[key] = value;
+    }
+  }
+  return data;
+}
+
+function serialize(node, parentId) {
+  const out = {
+    id: node.id,
+    name: node.name,
+    type: node.type,
+    parentId,
+    pluginData: readPluginData(node),
+  };
+  if (typeof node.x === "number") out.x = node.x;
+  if (typeof node.y === "number") out.y = node.y;
+  if (typeof node.width === "number") out.width = node.width;
+  if (typeof node.height === "number") out.height = node.height;
+  if (node.type === "STICKY" && node.text) out.text = node.text.characters;
+  if (node.type === "TEXT" && typeof node.characters === "string") out.text = node.characters;
+  if (node.type === "SHAPE_WITH_TEXT" && node.text) out.text = node.text.characters;
+  if (node.type === "LINK_UNFURL") {
+    if (typeof node.url === "string") out.text = node.url;
+    else if (node.link && typeof node.link.url === "string") out.text = node.link.url;
+  }
+  if (node.type === "CONNECTOR") {
+    out.connectorStart = node.connectorStart || null;
+    out.connectorEnd = node.connectorEnd || null;
+  }
+  if ("children" in node && Array.isArray(node.children) && node.children.length > 0) {
+    out.children = node.children.map((child) => serialize(child, node.id));
+  }
+  return out;
+}
+
+const page = figma.currentPage;
+return {
+  fileKey: typeof figma.fileKey === "string" ? figma.fileKey : null,
+  pageId: page.id,
+  pageName: page.name,
+  generatedAt: new Date().toISOString(),
+  nodes: page.children.map((node) => serialize(node, page.id)),
 };
 `,
 			12000,

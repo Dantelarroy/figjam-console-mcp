@@ -35,6 +35,41 @@ function createMockClient() {
 		getStickies: jest.fn().mockResolvedValue([{ id: "s1", type: "STICKY", text: "A" }]),
 		getConnections: jest.fn().mockResolvedValue([{ id: "c1", type: "CONNECTOR" }]),
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
+		scanBoardState: jest.fn().mockResolvedValue({
+			fileKey: "file-key-1",
+			pageId: "0:1",
+			pageName: "Page 1",
+			generatedAt: "2026-03-07T00:00:00.000Z",
+			nodes: [
+				{
+					id: "s1",
+					name: "Sticky 1",
+					type: "STICKY",
+					x: 10,
+					y: 20,
+					width: 240,
+					height: 240,
+					text: "Idea 1",
+					parentId: "0:1",
+					pluginData: {
+						"figjam.alias": "idea-1",
+						"figjam.groupId": "group-a",
+						"figjam.updatedAt": "2026-03-07T00:00:00.000Z",
+					},
+				},
+				{
+					id: "c1",
+					name: "Cluster A",
+					type: "SECTION",
+					x: 0,
+					y: 0,
+					width: 600,
+					height: 400,
+					parentId: "0:1",
+					pluginData: {},
+				},
+			],
+		}),
 	};
 }
 
@@ -53,8 +88,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 24 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(24);
+	it("registers the 26 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(26);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -82,8 +117,46 @@ describe("FigJam tools contract", () => {
 				"organizeByTheme",
 				"linkByRelation",
 				"generateResearchBoard",
+				"figjam_index_board",
+				"getBoardIndex",
 			]),
 		);
+	});
+
+	it("validates figjam_index_board schema and returns deterministic index", async () => {
+		const tool = server._getTool("figjam_index_board");
+		expect(validate("figjam_index_board", {}).success).toBe(true);
+		expect(validate("figjam_index_board", { includeEntities: false }).success).toBe(true);
+		expect(validate("figjam_index_board", { includeEntities: "nope" }).success).toBe(false);
+
+		const result = await tool.handler({ includeEntities: true });
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.index.fileKey).toBe("file-key-1");
+		expect(data.index.counts.entities).toBe(2);
+		expect(data.index.aliases["idea-1"]).toBe("s1");
+	});
+
+	it("validates getBoardIndex cache/refresh behavior", async () => {
+		const indexTool = server._getTool("figjam_index_board");
+		const getTool = server._getTool("getBoardIndex");
+		expect(validate("getBoardIndex", {}).success).toBe(true);
+		expect(validate("getBoardIndex", { refresh: true }).success).toBe(true);
+		expect(validate("getBoardIndex", { refresh: "yes" }).success).toBe(false);
+
+		await indexTool.handler({ includeEntities: true });
+		client.scanBoardState.mockClear();
+
+		const cached = await getTool.handler({ refresh: false, includeEntities: true });
+		expect(cached.isError).toBeUndefined();
+		const cachedData = JSON.parse(cached.content[0].text);
+		expect(cachedData.index.source).toBe("cache");
+
+		const refreshed = await getTool.handler({ refresh: true, includeEntities: false });
+		expect(refreshed.isError).toBeUndefined();
+		const refreshedData = JSON.parse(refreshed.content[0].text);
+		expect(refreshedData.index.source).toBe("fresh");
+		expect(refreshedData.index.entities).toEqual([]);
 	});
 
 	it("validates captureWebImage schema and deterministic no-target error", async () => {
