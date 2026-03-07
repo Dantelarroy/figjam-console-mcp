@@ -35,6 +35,7 @@ function createMockClient() {
 		getStickies: jest.fn().mockResolvedValue([{ id: "s1", type: "STICKY", text: "A" }]),
 		getConnections: jest.fn().mockResolvedValue([{ id: "c1", type: "CONNECTOR" }]),
 		moveNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", x: 0, y: 0 }),
+		updateNode: jest.fn().mockResolvedValue({ id: "n1", type: "STICKY", name: "Updated node" }),
 		scanBoardState: jest.fn().mockResolvedValue({
 			fileKey: "file-key-1",
 			pageId: "0:1",
@@ -88,8 +89,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 26 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(26);
+	it("registers the 27 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(27);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -119,6 +120,7 @@ describe("FigJam tools contract", () => {
 				"generateResearchBoard",
 				"figjam_index_board",
 				"getBoardIndex",
+				"figjam_upsert_artifact",
 			]),
 		);
 	});
@@ -157,6 +159,37 @@ describe("FigJam tools contract", () => {
 		const refreshedData = JSON.parse(refreshed.content[0].text);
 		expect(refreshedData.index.source).toBe("fresh");
 		expect(refreshedData.index.entities).toEqual([]);
+	});
+
+	it("validates figjam_upsert_artifact schema and target/create precedence", async () => {
+		const tool = server._getTool("figjam_upsert_artifact");
+		expect(validate("figjam_upsert_artifact", { create: { kind: "sticky", text: "A" } }).success).toBe(
+			true,
+		);
+		expect(validate("figjam_upsert_artifact", { patch: { text: "only patch" } }).success).toBe(true);
+
+		const invalid = await tool.handler({ patch: { text: "only patch" } });
+		expect(invalid.isError).toBe(true);
+		expect(JSON.parse(invalid.content[0].text).error.code).toBe("INVALID_REQUEST");
+
+		const created = await tool.handler({
+			create: { kind: "sticky", text: "New item", x: 1, y: 2 },
+			alias: "new-item",
+		});
+		expect(created.isError).toBeUndefined();
+		const createdData = JSON.parse(created.content[0].text);
+		expect(createdData.upsert.resolution).toBe("create");
+		expect(createdData.upsert.alias).toBe("new-item");
+
+		const updated = await tool.handler({
+			target: { alias: "idea-1" },
+			patch: { text: "Updated by alias" },
+			groupId: "group-b",
+		});
+		expect(updated.isError).toBeUndefined();
+		const updatedData = JSON.parse(updated.content[0].text);
+		expect(updatedData.upsert.resolution).toBe("target");
+		expect(client.updateNode).toHaveBeenCalled();
 	});
 
 	it("validates captureWebImage schema and deterministic no-target error", async () => {

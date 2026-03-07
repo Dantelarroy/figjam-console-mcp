@@ -13,6 +13,12 @@ export function registerSectionTools(server: McpServer, getClient: GetFigJamClie
 			y: z.number().optional().describe("Y position"),
 			width: z.number().optional().describe("Width"),
 			height: z.number().optional().describe("Height"),
+			alias: z.string().optional().describe("Deterministic alias"),
+			containerId: z.string().optional().describe("Structural container id"),
+			groupId: z.string().optional().describe("Logical group id"),
+			sourceUrl: z.string().optional().describe("Source URL"),
+			role: z.string().optional().describe("Artifact role"),
+			metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
 		},
 		async (input) => {
 			try {

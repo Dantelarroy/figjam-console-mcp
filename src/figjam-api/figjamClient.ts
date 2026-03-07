@@ -30,6 +30,12 @@ export interface CreateStickyInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface UpdateStickyInput {
@@ -39,6 +45,12 @@ export interface UpdateStickyInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface CreateShapeInput {
@@ -48,6 +60,12 @@ export interface CreateShapeInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface CreateConnectorInput {
@@ -60,6 +78,12 @@ export interface CreateTextInput {
 	x?: number;
 	y?: number;
 	fontSize?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface CreateLinkInput {
@@ -67,6 +91,12 @@ export interface CreateLinkInput {
 	title?: string;
 	x?: number;
 	y?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface CreateSectionInput {
@@ -75,6 +105,12 @@ export interface CreateSectionInput {
 	y?: number;
 	width?: number;
 	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export interface InsertImageInput {
@@ -96,6 +132,22 @@ export interface MoveNodeInput {
 	nodeId: string;
 	x: number;
 	y: number;
+}
+
+export interface UpdateNodeInput {
+	nodeId: string;
+	title?: string;
+	text?: string;
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	role?: string;
+	metadata?: Record<string, string | number | boolean>;
 }
 
 export class FigJamClient {
@@ -130,6 +182,15 @@ if (typeof input.width === "number" && typeof input.height === "number") {
   sticky.resize(input.width, input.height);
 }
 figma.currentPage.appendChild(sticky);
+if (typeof sticky.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) sticky.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) sticky.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) sticky.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) sticky.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) sticky.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") sticky.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  sticky.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
 return { id: sticky.id, name: sticky.name, type: sticky.type, x: sticky.x, y: sticky.y, width: sticky.width, height: sticky.height, text: sticky.text.characters };
 `,
 			12000,
@@ -152,6 +213,15 @@ if (typeof input.x === "number") node.x = input.x;
 if (typeof input.y === "number") node.y = input.y;
 if (typeof input.width === "number" && typeof input.height === "number") {
   node.resize(input.width, input.height);
+}
+if (typeof node.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) node.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) node.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) node.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) node.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) node.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") node.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  node.setPluginData("figjam.updatedAt", new Date().toISOString());
 }
 return { id: node.id, name: node.name, type: node.type, x: node.x, y: node.y, width: node.width, height: node.height, text: node.text.characters };
 `,
@@ -190,6 +260,15 @@ if (typeof input.width === "number" && typeof input.height === "number") {
   shape.resize(input.width, input.height);
 }
 figma.currentPage.appendChild(shape);
+if (typeof shape.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) shape.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) shape.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) shape.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) shape.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) shape.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") shape.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  shape.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
 return { id: shape.id, name: shape.name, type: shape.type, x: shape.x, y: shape.y, width: shape.width, height: shape.height, text: shape.text.characters };
 `,
 			12000,
@@ -225,6 +304,15 @@ if (typeof input.fontSize === "number") textNode.fontSize = input.fontSize;
 if (typeof input.x === "number") textNode.x = input.x;
 if (typeof input.y === "number") textNode.y = input.y;
 figma.currentPage.appendChild(textNode);
+if (typeof textNode.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) textNode.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) textNode.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) textNode.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) textNode.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) textNode.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") textNode.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  textNode.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
 return { id: textNode.id, name: textNode.name, type: textNode.type, x: textNode.x, y: textNode.y, width: textNode.width, height: textNode.height, text: textNode.characters };
 `,
 			12000,
@@ -273,9 +361,14 @@ if (linkNode.type === "LINK_UNFURL") {
 
 if (typeof linkNode.setPluginData === "function") {
   linkNode.setPluginData("figjam.link.url", input.url);
-  if (typeof input.title === "string" && input.title.trim().length > 0) {
-    linkNode.setPluginData("figjam.link.title", input.title.trim());
-  }
+  if (typeof input.title === "string" && input.title.trim().length > 0) linkNode.setPluginData("figjam.link.title", input.title.trim());
+  if (typeof input.role === "string" && input.role.trim().length > 0) linkNode.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) linkNode.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) linkNode.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) linkNode.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) linkNode.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") linkNode.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  linkNode.setPluginData("figjam.updatedAt", new Date().toISOString());
 }
 
 const urlValue = typeof linkNode.url === "string" ? linkNode.url : input.url;
@@ -309,6 +402,15 @@ if (typeof input.width === "number" && typeof input.height === "number") {
   section.resize(input.width, input.height);
 }
 figma.currentPage.appendChild(section);
+if (typeof section.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) section.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) section.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) section.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) section.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) section.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") section.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  section.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
 return { id: section.id, name: section.name, type: section.type, x: section.x, y: section.y, width: section.width, height: section.height };
 `,
 			12000,
@@ -496,6 +598,65 @@ return {
   width: typeof node.width === "number" ? node.width : undefined,
   height: typeof node.height === "number" ? node.height : undefined
 };
+`,
+			12000,
+		);
+	}
+
+	async updateNode(input: UpdateNodeInput): Promise<FigJamNodeSummary> {
+		return this.execute<FigJamNodeSummary>(
+			`
+const input = ${JSON.stringify(input)};
+const node = await figma.getNodeByIdAsync(input.nodeId);
+if (!node) throw new Error("Node not found: " + input.nodeId);
+
+if (typeof input.title === "string" && input.title.trim().length > 0) {
+  node.name = input.title.trim();
+}
+if (typeof input.x === "number" && typeof node.x === "number") node.x = input.x;
+if (typeof input.y === "number" && typeof node.y === "number") node.y = input.y;
+if (typeof input.width === "number" && typeof input.height === "number" && typeof node.resize === "function") {
+  node.resize(input.width, input.height);
+}
+
+if (typeof input.text === "string") {
+  if (node.type === "STICKY") {
+    await figma.loadFontAsync(node.text.fontName);
+    node.text.characters = input.text;
+  } else if (node.type === "TEXT") {
+    await figma.loadFontAsync(node.fontName);
+    node.characters = input.text;
+  } else if (node.type === "SHAPE_WITH_TEXT") {
+    await figma.loadFontAsync(node.text.fontName);
+    node.text.characters = input.text;
+  } else {
+    throw new Error("Node type does not support text update: " + node.type);
+  }
+}
+
+if (typeof node.setPluginData === "function") {
+  if (typeof input.role === "string" && input.role.trim().length > 0) node.setPluginData("figjam.role", input.role.trim());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) node.setPluginData("figjam.alias", input.alias.trim());
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) node.setPluginData("figjam.containerId", input.containerId.trim());
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) node.setPluginData("figjam.groupId", input.groupId.trim());
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) node.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  if (input.metadata && typeof input.metadata === "object") node.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  node.setPluginData("figjam.updatedAt", new Date().toISOString());
+}
+
+const out = { id: node.id, name: node.name, type: node.type };
+if (typeof node.x === "number") out.x = node.x;
+if (typeof node.y === "number") out.y = node.y;
+if (typeof node.width === "number") out.width = node.width;
+if (typeof node.height === "number") out.height = node.height;
+if (node.type === "STICKY" && node.text) out.text = node.text.characters;
+if (node.type === "TEXT" && typeof node.characters === "string") out.text = node.characters;
+if (node.type === "SHAPE_WITH_TEXT" && node.text) out.text = node.text.characters;
+if (node.type === "LINK_UNFURL") {
+  if (typeof node.url === "string") out.text = node.url;
+  else if (node.link && typeof node.link.url === "string") out.text = node.link.url;
+}
+return out;
 `,
 			12000,
 		);

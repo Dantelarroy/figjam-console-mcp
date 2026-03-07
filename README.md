@@ -46,6 +46,11 @@ This repository is focused on:
 - `linkByRelation`
 - `generateResearchBoard`
 
+### DBI tools
+- `figjam_index_board`
+- `getBoardIndex`
+- `figjam_upsert_artifact`
+
 ## Tool Catalog (What Each Tool Does)
 
 ### Connection and runtime
@@ -94,6 +99,14 @@ This repository is focused on:
 | `organizeByTheme` | Creates theme clusters from explicit refs/queries (no semantic inference). |
 | `linkByRelation` | Creates connectors between explicit node refs/queries with dedupe options. |
 | `generateResearchBoard` | End-to-end deterministic scaffold: sections + notes + references + optional links/layout. |
+
+### DBI v1 tools (deterministic board state layer)
+
+| Tool | What it does |
+|---|---|
+| `figjam_index_board` | Builds a deterministic board index snapshot (artifacts/containers/connectors, aliases, collisions, metadata). |
+| `getBoardIndex` | Returns cached index when available (`refresh=false`) or rebuilds fresh (`refresh=true`). |
+| `figjam_upsert_artifact` | Deterministic create/update by `nodeId` or alias with explicit precedence (`target` > `create`) and structured errors. |
 
 ### Upstream compatibility surface (guarded)
 

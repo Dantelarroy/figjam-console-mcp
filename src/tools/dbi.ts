@@ -52,6 +52,45 @@ const getBoardIndexInputSchema = {
 	includeEntities: z.boolean().default(true),
 };
 
+const upsertArtifactInputSchema = {
+	target: z
+		.object({
+			nodeId: z.string().min(1).optional(),
+			alias: z.string().min(1).optional(),
+		})
+		.optional(),
+	create: z
+		.object({
+			kind: z.enum(["sticky", "shape", "text", "link", "section"]),
+			title: z.string().min(1).max(500).optional(),
+			text: z.string().min(1).max(4000).optional(),
+			url: z.string().url().optional(),
+			shapeType: z.enum(["rectangle", "circle", "diamond"]).optional(),
+			x: z.number().optional(),
+			y: z.number().optional(),
+			width: z.number().optional(),
+			height: z.number().optional(),
+			fontSize: z.number().optional(),
+		})
+		.optional(),
+	patch: z
+		.object({
+			title: z.string().min(1).max(500).optional(),
+			text: z.string().min(1).max(4000).optional(),
+			x: z.number().optional(),
+			y: z.number().optional(),
+			width: z.number().optional(),
+			height: z.number().optional(),
+		})
+		.optional(),
+	alias: z.string().min(1).optional(),
+	containerId: z.string().min(1).optional(),
+	groupId: z.string().min(1).optional(),
+	role: z.string().min(1).optional(),
+	sourceUrl: z.string().url().optional(),
+	metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+};
+
 const cache = new Map<string, DBIIndexSnapshot>();
 
 function flattenNodes(nodes: FigJamNodeSummary[]): FigJamNodeSummary[] {
@@ -171,6 +210,25 @@ function maybeStripEntities(snapshot: DBIIndexSnapshot, includeEntities: boolean
 	};
 }
 
+function dbiError(code: string, tool: string, message: string, details?: unknown) {
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: JSON.stringify({
+					error: {
+						code,
+						tool,
+						message,
+						details,
+					},
+				}),
+			},
+		],
+		isError: true as const,
+	};
+}
+
 export function registerDBITools(server: McpServer, getClient: GetFigJamClient): void {
 	server.tool(
 		"figjam_index_board",
@@ -218,5 +276,198 @@ export function registerDBITools(server: McpServer, getClient: GetFigJamClient):
 			}
 		},
 	);
-}
 
+	server.tool(
+		"figjam_upsert_artifact",
+		"Create or update a deterministic artifact by nodeId/alias with explicit precedence rules.",
+		upsertArtifactInputSchema,
+		async (input) => {
+			try {
+				const hasTarget = Boolean(input.target?.nodeId || input.target?.alias);
+				const hasCreate = Boolean(input.create);
+				const hasPatch = Boolean(input.patch);
+
+				if (!hasTarget && !hasCreate && hasPatch) {
+					return dbiError(
+						"INVALID_REQUEST",
+						"figjam_upsert_artifact",
+						"patch requires target or create",
+					);
+				}
+
+				if (!hasTarget && !hasCreate) {
+					return dbiError(
+						"INVALID_REQUEST",
+						"figjam_upsert_artifact",
+						"Provide target or create",
+					);
+				}
+
+				const client = await getClient();
+				const scan = await client.scanBoardState();
+				const snapshot = fromScan(scan, "fresh");
+				cache.set(keyForSnapshot(scan), snapshot);
+
+				let targetNodeId: string | null = null;
+				let resolution: "target" | "create" | "create_fallback" = "create";
+
+				if (input.target?.nodeId) {
+					const exists = snapshot.entities.some((e) => e.nodeId === input.target?.nodeId);
+					if (exists) {
+						targetNodeId = input.target.nodeId;
+						resolution = "target";
+					} else if (!hasCreate) {
+						return dbiError("NOT_FOUND", "figjam_upsert_artifact", "target.nodeId not found", {
+							nodeId: input.target.nodeId,
+						});
+					}
+				}
+
+				if (!targetNodeId && input.target?.alias) {
+					const collision = snapshot.collisions.find((c) => c.alias === input.target?.alias);
+					if (collision) {
+						return dbiError(
+							"ALIAS_CONFLICT",
+							"figjam_upsert_artifact",
+							"Alias resolves to multiple nodes",
+							{ alias: input.target.alias, nodeIds: collision.nodeIds },
+						);
+					}
+					const resolved = snapshot.aliases[input.target.alias];
+					if (resolved) {
+						targetNodeId = resolved;
+						resolution = "target";
+					} else if (!hasCreate) {
+						return dbiError("NOT_FOUND", "figjam_upsert_artifact", "target.alias not found", {
+							alias: input.target.alias,
+						});
+					}
+				}
+
+				let nodeId = targetNodeId;
+				if (!nodeId) {
+					if (!input.create) {
+						return dbiError(
+							"INVALID_REQUEST",
+							"figjam_upsert_artifact",
+							"Unable to resolve target and no create payload provided",
+						);
+					}
+					resolution = hasTarget ? "create_fallback" : "create";
+					const base = {
+						alias: input.alias,
+						containerId: input.containerId,
+						groupId: input.groupId,
+						role: input.role,
+						sourceUrl: input.sourceUrl,
+						metadata: input.metadata,
+					};
+					if (input.create.kind === "sticky") {
+						const sticky = await client.createSticky({
+							text: input.create.text || input.create.title || "Untitled",
+							x: input.create.x,
+							y: input.create.y,
+							width: input.create.width,
+							height: input.create.height,
+							...base,
+						});
+						nodeId = sticky.id;
+					} else if (input.create.kind === "shape") {
+						const shape = await client.createShape({
+							type: input.create.shapeType || "rectangle",
+							text: input.create.text || input.create.title,
+							x: input.create.x,
+							y: input.create.y,
+							width: input.create.width,
+							height: input.create.height,
+							...base,
+						});
+						nodeId = shape.id;
+					} else if (input.create.kind === "text") {
+						const text = await client.createText({
+							text: input.create.text || input.create.title || "Untitled",
+							x: input.create.x,
+							y: input.create.y,
+							fontSize: input.create.fontSize,
+							...base,
+						});
+						nodeId = text.id;
+					} else if (input.create.kind === "link") {
+						if (!input.create.url) {
+							return dbiError(
+								"INVALID_REQUEST",
+								"figjam_upsert_artifact",
+								"create.url is required for kind=link",
+							);
+						}
+						const link = await client.createLink({
+							url: input.create.url,
+							title: input.create.title,
+							x: input.create.x,
+							y: input.create.y,
+							...base,
+						});
+						nodeId = link.id;
+					} else {
+						const section = await client.createSection({
+							name: input.create.title,
+							x: input.create.x,
+							y: input.create.y,
+							width: input.create.width,
+							height: input.create.height,
+							...base,
+						});
+						nodeId = section.id;
+					}
+				}
+
+				const resolvedNodeId = nodeId as string;
+
+				const shouldPatch = Boolean(
+					input.patch ||
+						input.alias ||
+						input.containerId ||
+						input.groupId ||
+						input.role ||
+						input.sourceUrl ||
+						input.metadata,
+				);
+
+				const updated = shouldPatch
+					? await client.updateNode({
+							nodeId: resolvedNodeId,
+							title: input.patch?.title,
+							text: input.patch?.text,
+							x: input.patch?.x,
+							y: input.patch?.y,
+							width: input.patch?.width,
+							height: input.patch?.height,
+							alias: input.alias,
+							containerId: input.containerId,
+							groupId: input.groupId,
+							role: input.role,
+							sourceUrl: input.sourceUrl,
+							metadata: input.metadata,
+						})
+					: await client.updateNode({ nodeId: resolvedNodeId });
+
+				const refreshedScan = await client.scanBoardState();
+				cache.set(keyForSnapshot(refreshedScan), fromScan(refreshedScan, "fresh"));
+
+				return ok({
+					upsert: {
+						nodeId: updated.id,
+						nodeType: updated.type,
+						resolution,
+						alias: input.alias || null,
+						containerId: input.containerId || null,
+						groupId: input.groupId || null,
+					},
+					node: updated,
+				});
+			} catch (error) {
+				return fail(error, "Failed to upsert artifact");
+			}
+		},
+	);
+}
