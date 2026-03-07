@@ -78,6 +78,20 @@ For each implemented milestone, run:
 
 Prefer deterministic test fixtures and explicit assertions over snapshot-only checks.
 
+## FigJam Bridge Stability Protocol (Required)
+- For connected FigJam validations, run exactly one persistent server session (`npm run dev:figjam`) and keep it alive for the full task.
+- Do not start nested/parallel `dev:figjam` processes during smoke runs.
+- Pin and respect one bridge port for the whole validation window (default `9323`).
+- Before any mutating call, require connected-state proof from source of truth:
+  - `figjam_get_status.connected === true`
+  - `figjam_get_status.websocket.connectedFiles > 0`
+- If disconnected mid-run:
+  - stop mutating calls immediately,
+  - re-establish connection,
+  - rerun status check first,
+  - only then continue.
+- Treat repeated bridge flapping as a blocker and report it explicitly in milestone risks.
+
 ## Milestone Completion Report (Required)
 After each milestone, report:
 - files changed,

@@ -65,6 +65,21 @@ export interface CreateSectionInput {
 	height?: number;
 }
 
+export interface InsertImageInput {
+	imageBytes: number[];
+	mimeType: string;
+	title?: string;
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+	alias?: string;
+	containerId?: string;
+	groupId?: string;
+	sourceUrl?: string;
+	metadata?: Record<string, string | number | boolean>;
+}
+
 export interface MoveNodeInput {
 	nodeId: string;
 	x: number;
@@ -285,6 +300,97 @@ figma.currentPage.appendChild(section);
 return { id: section.id, name: section.name, type: section.type, x: section.x, y: section.y, width: section.width, height: section.height };
 `,
 			12000,
+		);
+	}
+
+	async insertImage(input: InsertImageInput): Promise<FigJamNodeSummary> {
+		return this.execute<FigJamNodeSummary>(
+			`
+const input = ${JSON.stringify(input)};
+if (!Array.isArray(input.imageBytes) || input.imageBytes.length === 0) {
+  throw new Error("Missing image payload");
+}
+if (!input.mimeType || typeof input.mimeType !== "string") {
+  throw new Error("Missing mimeType");
+}
+
+if (typeof figma.createImage !== "function") {
+  throw new Error("IMAGE_INSERT_NOT_SUPPORTED: FigJam runtime does not expose createImage");
+}
+
+const imageBytes = new Uint8Array(input.imageBytes);
+const image = figma.createImage(imageBytes);
+const imageSize = await image.getSizeAsync();
+
+let node = null;
+if (typeof figma.createRectangle === "function") {
+  node = figma.createRectangle();
+} else if (typeof figma.createShapeWithText === "function") {
+  node = figma.createShapeWithText();
+  node.shapeType = "SQUARE";
+  if (node.text && node.text.fontName) {
+    await figma.loadFontAsync(node.text.fontName);
+    node.text.characters = "";
+  }
+} else {
+  throw new Error("IMAGE_INSERT_NOT_SUPPORTED: no rectangle/shape constructor available");
+}
+
+const targetWidth = typeof input.width === "number" ? input.width : imageSize.width;
+const targetHeight = typeof input.height === "number" ? input.height : imageSize.height;
+if (typeof node.resize === "function") {
+  node.resize(targetWidth, targetHeight);
+}
+
+if (typeof input.x === "number") node.x = input.x;
+if (typeof input.y === "number") node.y = input.y;
+if (typeof input.title === "string" && input.title.trim().length > 0) {
+  node.name = input.title.trim();
+}
+
+if ("fills" in node) {
+  node.fills = [
+    {
+      type: "IMAGE",
+      imageHash: image.hash,
+      scaleMode: "FILL"
+    }
+  ];
+}
+
+figma.currentPage.appendChild(node);
+
+if (typeof node.setPluginData === "function") {
+  node.setPluginData("figjam.role", "image_reference");
+  node.setPluginData("figjam.updatedAt", new Date().toISOString());
+  if (typeof input.alias === "string" && input.alias.trim().length > 0) {
+    node.setPluginData("figjam.alias", input.alias.trim());
+  }
+  if (typeof input.containerId === "string" && input.containerId.trim().length > 0) {
+    node.setPluginData("figjam.containerId", input.containerId.trim());
+  }
+  if (typeof input.groupId === "string" && input.groupId.trim().length > 0) {
+    node.setPluginData("figjam.groupId", input.groupId.trim());
+  }
+  if (typeof input.sourceUrl === "string" && input.sourceUrl.trim().length > 0) {
+    node.setPluginData("figjam.sourceUrl", input.sourceUrl.trim());
+  }
+  if (input.metadata && typeof input.metadata === "object") {
+    node.setPluginData("figjam.metadata", JSON.stringify(input.metadata));
+  }
+}
+
+return {
+  id: node.id,
+  name: node.name,
+  type: node.type,
+  x: node.x,
+  y: node.y,
+  width: node.width,
+  height: node.height
+};
+`,
+			15000,
 		);
 	}
 

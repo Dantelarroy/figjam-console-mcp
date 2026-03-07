@@ -22,6 +22,9 @@ This repository is focused on:
 ### Board primitives
 - `createSticky`
 - `createLink` (native card preview)
+- `captureWebImage`
+- `insertLocalImage`
+- `createImageReference`
 - `createConnector`
 - `createText`
 - `createSection`
@@ -62,6 +65,9 @@ This repository is focused on:
 | `deleteSticky` | Deletes a sticky by `nodeId`. |
 | `createShape` | Creates `rectangle`, `circle`, or `diamond` (optional text). |
 | `createLink` | Creates a native `LINK_UNFURL` card from a URL. This tool is strict: it returns an error when the runtime or URL metadata cannot produce a rich card preview. |
+| `captureWebImage` | Captures a deterministic web screenshot to local disk (`selector`, ordered `selectors`, or explicit clip). |
+| `insertLocalImage` | Inserts a local image file (`png/jpg/jpeg/webp`) into FigJam as deterministic artifact with optional alias/metadata. |
+| `createImageReference` | Creates a structured image-reference artifact (image + deterministic metadata/alias for retrieval workflows). |
 | `createConnector` | Creates a connector between `fromNodeId` and `toNodeId`. |
 | `createText` | Creates a text node with optional position/font size. |
 | `createSection` | Creates a section container in the board. |
@@ -251,6 +257,16 @@ Expected behavior:
 - status reports active connection,
 - created nodes appear in the board,
 - read tools return the created nodes.
+
+### 4.1 Web screenshot to FigJam image flow
+
+Use Playwright from the agent side to capture a local screenshot, then insert it with MCP:
+
+1. Capture image with Playwright and save it locally (for example `/tmp/bear-1.png`).
+2. Call `insertLocalImage` with that local path and board position.
+3. Optional: call `createImageReference` to attach structured alias/metadata in one step.
+
+This keeps MCP deterministic: browser automation stays in the agent, board rendering/state stays in FigJam MCP.
 
 ## Recent Updates
 

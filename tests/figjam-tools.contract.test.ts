@@ -30,6 +30,7 @@ function createMockClient() {
 		createConnector: jest.fn().mockResolvedValue({ id: "conn-1", type: "CONNECTOR" }),
 		createText: jest.fn().mockResolvedValue({ id: "text-1", type: "TEXT", text: "Hello" }),
 		createSection: jest.fn().mockResolvedValue({ id: "section-1", type: "SECTION" }),
+		insertImage: jest.fn().mockResolvedValue({ id: "img-1", type: "RECTANGLE", x: 10, y: 20, width: 200, height: 120 }),
 		getBoardNodes: jest.fn().mockResolvedValue([{ id: "n1", type: "STICKY" }]),
 		getStickies: jest.fn().mockResolvedValue([{ id: "s1", type: "STICKY", text: "A" }]),
 		getConnections: jest.fn().mockResolvedValue([{ id: "c1", type: "CONNECTOR" }]),
@@ -52,8 +53,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 21 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(21);
+	it("registers the 24 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(24);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -68,6 +69,9 @@ describe("FigJam tools contract", () => {
 				"getBoardNodes",
 				"getStickies",
 				"getConnections",
+				"captureWebImage",
+				"insertLocalImage",
+				"createImageReference",
 				"bulkCreateStickies",
 				"findNodes",
 				"createCluster",
@@ -80,6 +84,57 @@ describe("FigJam tools contract", () => {
 				"generateResearchBoard",
 			]),
 		);
+	});
+
+	it("validates captureWebImage schema and deterministic no-target error", async () => {
+		const tool = server._getTool("captureWebImage");
+		expect(validate("captureWebImage", { url: "https://example.com", selector: "img" }).success).toBe(
+			true,
+		);
+		expect(validate("captureWebImage", { url: "not-url" }).success).toBe(false);
+
+		const result = await tool.handler({
+			url: "https://example.com",
+			strict: true,
+		});
+		expect(result.isError).toBe(true);
+		const data = JSON.parse(result.content[0].text);
+		expect(data.errorCode).toBe("NO_CAPTURE_TARGET");
+	});
+
+	it("validates insertLocalImage schema and handles missing file errors", async () => {
+		const tool = server._getTool("insertLocalImage");
+		expect(validate("insertLocalImage", { localPath: "/tmp/a.png" }).success).toBe(true);
+		expect(validate("insertLocalImage", {}).success).toBe(false);
+
+		const result = await tool.handler({ localPath: "/tmp/this-file-does-not-exist.png" });
+		expect(result.isError).toBe(true);
+		const data = JSON.parse(result.content[0].text);
+		expect(data.errorCode).toBe("FILE_NOT_FOUND");
+	});
+
+	it("validates createImageReference schema and returns deterministic envelope", async () => {
+		const tool = server._getTool("createImageReference");
+		expect(validate("createImageReference", { localPath: "/tmp/a.png" }).success).toBe(true);
+		expect(validate("createImageReference", { localPath: "" }).success).toBe(false);
+
+		// Avoid filesystem dependency in this unit test.
+		const fs = await import("node:fs/promises");
+		const spy = jest.spyOn(fs, "readFile").mockResolvedValueOnce(Buffer.from("mock-png"));
+		const result = await tool.handler({
+			localPath: "/tmp/a.png",
+			alias: "bear-ref-1",
+			sourceUrl: "https://example.com/bear",
+			title: "Bear",
+			tags: ["bear", "illustration"],
+		});
+		spy.mockRestore();
+
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.reference.artifactNodeId).toBe("img-1");
+		expect(data.reference.alias).toBe("bear-ref-1");
+		expect(data.reference.type).toBe("image_reference");
 	});
 
 	it("validates createLink schema and returns MCP response envelope", async () => {

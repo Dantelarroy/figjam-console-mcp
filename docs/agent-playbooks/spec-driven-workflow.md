@@ -38,6 +38,15 @@ This document defines the default delivery workflow for repository agents.
 - Compare observed behavior to approved spec.
 - If changes are pushed, update corresponding roadmap DB item(s) status + milestone note.
 
+### Connected FigJam Validation Protocol
+- Start one persistent FigJam server session before smoke (`npm run dev:figjam`).
+- Keep the same process for all smoke calls; do not spawn additional server instances.
+- Validate bridge health before each mutation batch:
+  - `connected === true`
+  - `websocket.connectedFiles > 0`
+- If bridge disconnects, pause and recover connection first; do not continue mutating calls on stale/disconnected state.
+- Include bridge stability notes in final risk section.
+
 ## Source-of-Truth Rules
 - Runtime truth beats assumptions.
 - Upstream truth must be checked when parity is a goal.

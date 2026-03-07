@@ -17,11 +17,13 @@
 ## Smoke Validation
 - Environment:
 - Bridge/runtime connected state:
+- Persistent server session used (yes/no, pid/session):
 - Calls executed:
   1.
   2.
   3.
 - Raw payload references:
+- Bridge flapping observed (yes/no + details):
 
 ## Contract Checks
 - Existing contracts unchanged:

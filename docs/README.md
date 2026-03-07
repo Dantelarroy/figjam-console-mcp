@@ -9,6 +9,8 @@ This repository keeps documentation focused on the FigJam MVP scope.
   - `milestone-template.md`
   - `validation-template.md`
   - `change-request-template.md`
+- `specs/`:
+  - `visual-ingestion-pipeline-v1.md`
 
 ## Notes
 
