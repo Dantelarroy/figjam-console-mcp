@@ -36,3 +36,10 @@
 ## Verdict
 - Status: pass / partial / fail
 - Follow-up actions:
+
+## Notion Sync (Post-Push)
+- Roadmap page:
+  - `FigJam Console MCP — Product Roadmap` (`31b2c914-8640-80dc-9124-f5fa64c5bf43`)
+- Update appended: yes / no
+- If no, API error:
+- Manual update block:

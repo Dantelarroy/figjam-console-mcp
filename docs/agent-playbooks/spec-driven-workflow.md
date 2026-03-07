@@ -6,6 +6,8 @@ This document defines the default delivery workflow for repository agents.
 - Confirm repo integrity and branch context.
 - Confirm source of truth (local canonical module, upstream module, runtime signal).
 - Record assumptions and unstable points.
+- Load Notion roadmap context from:
+  - `FigJam Console MCP — Product Roadmap` (`31b2c914-8640-80dc-9124-f5fa64c5bf43`).
 
 ## 2) Analyze
 - Map the relevant architecture paths (registration, execution, runtime transport, data source).
@@ -33,6 +35,7 @@ This document defines the default delivery workflow for repository agents.
 - Run required tests.
 - Run smoke/runtime validation for affected paths.
 - Compare observed behavior to approved spec.
+- If changes are pushed, append a concise milestone update to the Notion roadmap page.
 
 ## Source-of-Truth Rules
 - Runtime truth beats assumptions.

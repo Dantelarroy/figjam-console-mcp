@@ -40,3 +40,7 @@
 - Smoke payloads:
 - Remaining risks:
 - Recommended next step:
+- Notion roadmap update:
+  - Page: `FigJam Console MCP — Product Roadmap` (`31b2c914-8640-80dc-9124-f5fa64c5bf43`)
+  - Block appended:
+  - If failed, error + manual paste block:
