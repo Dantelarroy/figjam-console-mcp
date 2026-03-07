@@ -89,8 +89,8 @@ describe("FigJam tools contract", () => {
 		return z.object(tool.schema).safeParse(payload);
 	}
 
-	it("registers the 27 FigJam tools", () => {
-		expect(server.tool).toHaveBeenCalledTimes(27);
+	it("registers the 29 FigJam tools", () => {
+		expect(server.tool).toHaveBeenCalledTimes(29);
 		const names = server.tool.mock.calls.map((c: any[]) => c[0]);
 		expect(names).toEqual(
 			expect.arrayContaining([
@@ -121,6 +121,8 @@ describe("FigJam tools contract", () => {
 				"figjam_index_board",
 				"getBoardIndex",
 				"figjam_upsert_artifact",
+				"figjam_organize_by_alias",
+				"figjam_validate_board_index",
 			]),
 		);
 	});
@@ -190,6 +192,54 @@ describe("FigJam tools contract", () => {
 		const updatedData = JSON.parse(updated.content[0].text);
 		expect(updatedData.upsert.resolution).toBe("target");
 		expect(client.updateNode).toHaveBeenCalled();
+	});
+
+	it("validates figjam_organize_by_alias schema and deterministic move behavior", async () => {
+		const tool = server._getTool("figjam_organize_by_alias");
+		expect(validate("figjam_organize_by_alias", { aliases: ["idea-1"] }).success).toBe(true);
+		expect(validate("figjam_organize_by_alias", { aliases: [] }).success).toBe(false);
+
+		const result = await tool.handler({
+			aliases: ["idea-1"],
+			layout: { mode: "grid", originX: 100, originY: 200, columns: 2, gapX: 300, gapY: 150 },
+			targetGroupId: "group-b",
+		});
+
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.organization.movedCount).toBe(1);
+		expect(data.organization.failedCount).toBe(0);
+		expect(data.organization.moved[0].alias).toBe("idea-1");
+		expect(client.moveNode).toHaveBeenCalledWith({ nodeId: "s1", x: 100, y: 200 });
+		expect(client.updateNode).toHaveBeenCalledWith({
+			nodeId: "s1",
+			containerId: undefined,
+			groupId: "group-b",
+		});
+	});
+
+	it("validates figjam_validate_board_index schema and reports deterministic issues", async () => {
+		const tool = server._getTool("figjam_validate_board_index");
+		expect(
+			validate("figjam_validate_board_index", {
+				requiredAliases: ["idea-1"],
+				requireUniqueAliases: true,
+			}).success,
+		).toBe(true);
+		expect(validate("figjam_validate_board_index", { maxVisualTargets: 0 }).success).toBe(false);
+
+		const result = await tool.handler({
+			requiredAliases: ["idea-1", "missing-alias"],
+			requireUniqueAliases: true,
+			requireResolvedConnectorEndpoints: true,
+		});
+		expect(result.isError).toBeUndefined();
+		const data = JSON.parse(result.content[0].text);
+		expect(data.validation.passed).toBe(false);
+		expect(data.validation.errorCount).toBeGreaterThanOrEqual(1);
+		const codes = data.validation.issues.map((i: any) => i.code);
+		expect(codes).toContain("REQUIRED_ALIAS_MISSING");
+		expect(Array.isArray(data.validation.visualTargets)).toBe(true);
 	});
 
 	it("validates captureWebImage schema and deterministic no-target error", async () => {

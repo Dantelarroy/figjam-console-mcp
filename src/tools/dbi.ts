@@ -91,6 +91,31 @@ const upsertArtifactInputSchema = {
 	metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
 };
 
+const organizeByAliasInputSchema = {
+	aliases: z.array(z.string().min(1)).min(1).max(500),
+	layout: z
+		.object({
+			mode: z.enum(["grid", "column"]).default("grid"),
+			originX: z.number().default(0),
+			originY: z.number().default(0),
+			columns: z.number().int().min(1).max(50).default(5),
+			gapX: z.number().min(0).default(260),
+			gapY: z.number().min(0).default(180),
+		})
+		.default({}),
+	targetContainerId: z.string().min(1).optional(),
+	targetGroupId: z.string().min(1).optional(),
+	dryRun: z.boolean().default(false),
+	continueOnError: z.boolean().default(true),
+};
+
+const validateBoardIndexInputSchema = {
+	requiredAliases: z.array(z.string().min(1)).max(500).optional(),
+	requireUniqueAliases: z.boolean().default(true),
+	requireResolvedConnectorEndpoints: z.boolean().default(true),
+	maxVisualTargets: z.number().int().min(1).max(50).default(10),
+};
+
 const cache = new Map<string, DBIIndexSnapshot>();
 
 function flattenNodes(nodes: FigJamNodeSummary[]): FigJamNodeSummary[] {
@@ -227,6 +252,18 @@ function dbiError(code: string, tool: string, message: string, details?: unknown
 		],
 		isError: true as const,
 	};
+}
+
+function resolveAliasToNodeId(snapshot: DBIIndexSnapshot, alias: string): { nodeId?: string; error?: string; code?: string } {
+	const collision = snapshot.collisions.find((c) => c.alias === alias);
+	if (collision) {
+		return { code: "ALIAS_CONFLICT", error: `Alias ${alias} resolves to multiple nodes` };
+	}
+	const nodeId = snapshot.aliases[alias];
+	if (!nodeId) {
+		return { code: "NOT_FOUND", error: `Alias ${alias} not found` };
+	}
+	return { nodeId };
 }
 
 export function registerDBITools(server: McpServer, getClient: GetFigJamClient): void {
@@ -467,6 +504,170 @@ export function registerDBITools(server: McpServer, getClient: GetFigJamClient):
 				});
 			} catch (error) {
 				return fail(error, "Failed to upsert artifact");
+			}
+		},
+	);
+
+	server.tool(
+		"figjam_organize_by_alias",
+		"Deterministically move artifacts by alias with optional grid/column layout and metadata updates.",
+		organizeByAliasInputSchema,
+		async ({ aliases, layout, targetContainerId, targetGroupId, dryRun, continueOnError }) => {
+			try {
+				const client = await getClient();
+				const scan = await client.scanBoardState();
+				const snapshot = fromScan(scan, "fresh");
+				cache.set(keyForSnapshot(scan), snapshot);
+
+				const moved: Array<{ alias: string; nodeId: string; from: { x?: number; y?: number }; to: { x: number; y: number } }> = [];
+				const failed: Array<{ alias: string; code: string; error: string }> = [];
+
+				for (let i = 0; i < aliases.length; i += 1) {
+					const alias = aliases[i];
+					const resolved = resolveAliasToNodeId(snapshot, alias);
+					if (!resolved.nodeId) {
+						if (!continueOnError) {
+							return dbiError(resolved.code || "NOT_FOUND", "figjam_organize_by_alias", resolved.error || "Alias resolution failed", {
+								alias,
+							});
+						}
+						failed.push({ alias, code: resolved.code || "NOT_FOUND", error: resolved.error || "Alias resolution failed" });
+						continue;
+					}
+
+					const entity = snapshot.entities.find((e) => e.nodeId === resolved.nodeId);
+					const targetX =
+						layout.mode === "grid"
+							? layout.originX + (i % layout.columns) * layout.gapX
+							: layout.originX;
+					const targetY =
+						layout.mode === "grid"
+							? layout.originY + Math.floor(i / layout.columns) * layout.gapY
+							: layout.originY + i * layout.gapY;
+
+					if (!dryRun) {
+						try {
+							await client.moveNode({ nodeId: resolved.nodeId, x: targetX, y: targetY });
+							if (targetContainerId || targetGroupId) {
+								await client.updateNode({
+									nodeId: resolved.nodeId,
+									containerId: targetContainerId,
+									groupId: targetGroupId,
+								});
+							}
+						} catch (error) {
+							const msg = error instanceof Error ? error.message : String(error);
+							if (!continueOnError) {
+								return dbiError("MOVE_FAILED", "figjam_organize_by_alias", msg, { alias, nodeId: resolved.nodeId });
+							}
+							failed.push({ alias, code: "MOVE_FAILED", error: msg });
+							continue;
+						}
+					}
+
+					moved.push({
+						alias,
+						nodeId: resolved.nodeId,
+						from: { x: entity?.x, y: entity?.y },
+						to: { x: targetX, y: targetY },
+					});
+				}
+
+				const refreshedScan = await client.scanBoardState();
+				cache.set(keyForSnapshot(refreshedScan), fromScan(refreshedScan, "fresh"));
+
+				return ok({
+					organization: {
+						mode: layout.mode,
+						dryRun,
+						targetContainerId: targetContainerId || null,
+						targetGroupId: targetGroupId || null,
+						movedCount: moved.length,
+						failedCount: failed.length,
+						moved,
+						failed,
+					},
+				});
+			} catch (error) {
+				return fail(error, "Failed to organize artifacts by alias");
+			}
+		},
+	);
+
+	server.tool(
+		"figjam_validate_board_index",
+		"Validate deterministic board index integrity and produce visual validation targets.",
+		validateBoardIndexInputSchema,
+		async ({ requiredAliases, requireUniqueAliases, requireResolvedConnectorEndpoints, maxVisualTargets }) => {
+			try {
+				const client = await getClient();
+				const scan = await client.scanBoardState();
+				const snapshot = fromScan(scan, "fresh");
+				cache.set(keyForSnapshot(scan), snapshot);
+
+				const issues: Array<{ code: string; severity: "error" | "warning"; message: string; details?: unknown }> = [];
+
+				if (requireUniqueAliases && snapshot.collisions.length > 0) {
+					for (const collision of snapshot.collisions) {
+						issues.push({
+							code: "ALIAS_CONFLICT",
+							severity: "error",
+							message: `Alias collision: ${collision.alias}`,
+							details: collision,
+						});
+					}
+				}
+
+				if (Array.isArray(requiredAliases)) {
+					for (const alias of requiredAliases) {
+						if (!snapshot.aliases[alias]) {
+							issues.push({
+								code: "REQUIRED_ALIAS_MISSING",
+								severity: "error",
+								message: `Required alias missing: ${alias}`,
+							});
+						}
+					}
+				}
+
+				if (requireResolvedConnectorEndpoints) {
+					const connectors = snapshot.entities.filter((e) => e.entityType === "connector");
+					for (const connector of connectors) {
+						const start = connector.connectorStart?.endpointNodeId;
+						const end = connector.connectorEnd?.endpointNodeId;
+						if (!start || !end) {
+							issues.push({
+								code: "CONNECTOR_ENDPOINT_MISSING",
+								severity: "warning",
+								message: `Connector ${connector.nodeId} has unresolved endpoint`,
+								details: { connectorId: connector.nodeId, start, end },
+							});
+						}
+					}
+				}
+
+				const visualTargets = snapshot.entities
+					.filter((e) => e.entityType !== "connector")
+					.slice(0, maxVisualTargets)
+					.map((e) => ({
+						nodeId: e.nodeId,
+						reason: e.alias ? `alias:${e.alias}` : e.name || e.nodeType,
+						suggestedTool: "figma_take_screenshot",
+						suggestedArgs: { nodeId: e.nodeId, scale: 2, format: "png" },
+					}));
+
+				return ok({
+					validation: {
+						passed: issues.filter((i) => i.severity === "error").length === 0,
+						issueCount: issues.length,
+						errorCount: issues.filter((i) => i.severity === "error").length,
+						warningCount: issues.filter((i) => i.severity === "warning").length,
+						issues,
+						visualTargets,
+					},
+				});
+			} catch (error) {
+				return fail(error, "Failed to validate board index");
 			}
 		},
 	);
